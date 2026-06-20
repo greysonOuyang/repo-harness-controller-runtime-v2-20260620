@@ -23,7 +23,7 @@ review and `next`, ou à lancer `/goal` puis passer AFK.
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | [Français](README.fr.md) | [Español](README.es.md)
 
-Adresse du dépôt : `https://github.com/Ancienttwo/repo-harness`
+Adresse du dépôt : `https://github.com/greysonOuyang/repo-harness-controller-runtime-v2-20260620`
 
 ## Pourquoi utiliser repo-harness
 
@@ -209,10 +209,10 @@ runtime. Si Bun est absent, il installe Bun d'abord, puis installe le CLI
 
 ```bash
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/Ancienttwo/repo-harness/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/greysonOuyang/repo-harness-controller-runtime-v2-20260620/main/install.sh | sh
 
 # Windows (PowerShell)
-irm https://raw.githubusercontent.com/Ancienttwo/repo-harness/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/greysonOuyang/repo-harness-controller-runtime-v2-20260620/main/install.ps1 | iex
 ```
 
 <details>
@@ -426,7 +426,7 @@ Guards courants :
 
 - npm package : `repo-harness@0.8.0`
 - Generated workflow stamp : `repo-harness@0.8.0+template@0.8.0`
-- GitHub repository : `Ancienttwo/repo-harness`
+- GitHub repository : `greysonOuyang/repo-harness-controller-runtime-v2-20260620`
 - Release history : [`docs/CHANGELOG.md`](docs/CHANGELOG.md)
 
 ## Remerciements
@@ -499,12 +499,12 @@ branch command pour créer un nouveau projet ou module. `hooks-init`, `docs-init
 Les maintainers qui éditent le package lui-même ont besoin d'un source checkout :
 
 ```bash
-git clone https://github.com/Ancienttwo/repo-harness.git ~/Projects/repo-harness
-cd ~/Projects/repo-harness
+git clone https://github.com/greysonOuyang/repo-harness-controller-runtime-v2-20260620.git ~/Projects/repo-harness-controller-runtime-v2-20260620
+cd ~/Projects/repo-harness-controller-runtime-v2-20260620
 bun src/cli/index.ts update
 ```
 
-`~/Projects/repo-harness` est l'unique source of truth éditable ; les chemins
+`~/Projects/repo-harness-controller-runtime-v2-20260620` est l'unique source of truth éditable ; les chemins
 Claude/Codex locaux (`~/.claude/skills/repo-harness`,
 `~/.codex/skills/repo-harness`) sont des runtime entrypoints adossés à des
 symlinks. Seul `~/.codex/skills/repo-harness` expose `SKILL.md` et

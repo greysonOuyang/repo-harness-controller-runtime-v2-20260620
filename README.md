@@ -20,7 +20,7 @@ Use it to:
 Give the agent a complete PRD or Sprint; after that, your loop is just review
 and `next`, or start `/goal` and go AFK.
 
-Repository: `https://github.com/Ancienttwo/repo-harness`
+Repository: `https://github.com/greysonOuyang/repo-harness-controller-runtime-v2-20260620`
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | [Français](README.fr.md) | [Español](README.es.md)
 
@@ -241,10 +241,10 @@ If Bun is missing, it installs Bun first, then installs the `repo-harness` CLI.
 
 ```bash
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/Ancienttwo/repo-harness/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/greysonOuyang/repo-harness-controller-runtime-v2-20260620/main/install.sh | sh
 
 # Windows (PowerShell)
-irm https://raw.githubusercontent.com/Ancienttwo/repo-harness/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/greysonOuyang/repo-harness-controller-runtime-v2-20260620/main/install.ps1 | iex
 ```
 
 <details>
@@ -500,7 +500,7 @@ Most common guards:
 
 - npm package: `repo-harness@0.8.0`
 - Generated workflow stamp: `repo-harness@0.8.0+template@0.8.0`
-- GitHub repository: `Ancienttwo/repo-harness`
+- GitHub repository: `greysonOuyang/repo-harness-controller-runtime-v2-20260620`
 - Release history: [`docs/CHANGELOG.md`](docs/CHANGELOG.md)
 
 ## Acknowledgements and Workflow Influences
@@ -589,12 +589,12 @@ narrow instead of refreshing the full harness.
 Maintainers editing the package itself need a source checkout:
 
 ```bash
-git clone https://github.com/Ancienttwo/repo-harness.git ~/Projects/repo-harness
-cd ~/Projects/repo-harness
+git clone https://github.com/greysonOuyang/repo-harness-controller-runtime-v2-20260620.git ~/Projects/repo-harness-controller-runtime-v2-20260620
+cd ~/Projects/repo-harness-controller-runtime-v2-20260620
 bun src/cli/index.ts update
 ```
 
-The `~/Projects/repo-harness` repo is the only editable source of truth; local
+The `~/Projects/repo-harness-controller-runtime-v2-20260620` repo is the only editable source of truth; local
 Claude/Codex paths (`~/.claude/skills/repo-harness`,
 `~/.codex/skills/repo-harness`) are symlink-backed runtime entrypoints. Only
 `~/.codex/skills/repo-harness` exposes `SKILL.md` and `assets/skill-commands/`;

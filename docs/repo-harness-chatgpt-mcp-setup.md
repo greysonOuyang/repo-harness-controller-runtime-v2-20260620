@@ -23,8 +23,8 @@ After connecting ChatGPT, call `controller_capabilities`. It should report `cont
 ## Install from an editable checkout
 
 ```bash
-git clone https://github.com/Ancienttwo/repo-harness.git ~/DevProjects/repo-harness
-cd ~/DevProjects/repo-harness
+git clone https://github.com/greysonOuyang/repo-harness-controller-runtime-v2-20260620.git ~/DevProjects/repo-harness-controller-runtime-v2-20260620
+cd ~/DevProjects/repo-harness-controller-runtime-v2-20260620
 bun install
 bun src/cli/index.ts install --target codex --no-hooks --no-external-skills --no-codegraph
 ```
