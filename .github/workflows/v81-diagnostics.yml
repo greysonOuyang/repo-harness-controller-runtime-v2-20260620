@@ -21,6 +21,7 @@ jobs:
             tests/cli/repository-registry-v81.test.ts \
             tests/cli/repository-migration-v81.test.ts \
             tests/cli/multi-repository-routing-v81.test.ts \
+            tests/cli/mcp-http.test.ts \
             2>&1 | tee focused-tests.log
       - name: Upload diagnostics
         if: always()
