@@ -50,9 +50,17 @@ tasks/.current.md.tmp.*
 .ai/harness/active-worktree
 .ai/harness/sprint/
 .ai/harness/worktrees/
+.ai/harness/worktrees
 .ai/harness/runs/
 .ai/harness/jobs/
+.ai/harness/jobs
 .ai/harness/edit-sessions/
+.ai/harness/edit-sessions
+.ai/harness/artifacts
+.ai/harness/controller
+.ai/harness/ephemeral-issues
+.ai/harness/local-bridge
+.ai/harness/repository.json
 .ai/harness/mcp/audit.log
 .ai/harness/chatgpt/browser-lock.json
 .ai/harness/chatgpt/bridge-extension/
