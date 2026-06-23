@@ -1,8 +1,10 @@
 # repo-harness
 
 <p align="center">
-  <img src="docs/images/repo-harness-gptpro.png" alt="repo-harness architecture and ChatGPT Pro local planner workflow diagram" width="960">
+  <img src="docs/images/repo-harness-banner.svg" alt="repo-harness banner showing the ChatGPT to Controller to Repo to Agent workflow" width="1280">
 </p>
+
+<!-- Legacy hero path kept in source for README DX continuity: docs/images/repo-harness-gptpro.png -->
 
 `repo-harness` turns Claude/Codex coding sessions into a repeatable repo-local
 workflow. It ships a CLI plus skill/runtime hooks that write context, plans,
@@ -36,6 +38,12 @@ repo-harness V8 makes the division of responsibility explicit: ChatGPT reads, re
 - The MCP surface is `controller-chatgpt-bridge-v8`, schema `10`, surface version `8`.
 
 See [V8 ChatGPT Execution Bridge](docs/repo-harness-chatgpt-bridge-v8.md) and [V8 verification record](docs/repo-harness-v8-verification.md).
+
+<p align="center">
+  <img src="docs/images/repo-harness-controller-flow.svg" alt="Architecture diagram of the ChatGPT to Controller to Repo to Agent flow in repo-harness" width="1280">
+</p>
+
+The editable source for this diagram lives in [`assets/branding/repo-harness-controller-flow.mmd`](assets/branding/repo-harness-controller-flow.mmd).
 
 ## Controller V6: Direct Change First
 
