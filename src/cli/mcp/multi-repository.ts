@@ -6,6 +6,7 @@ import type { McpAgentRunnerName } from './types';
 import { ensureControllerHome } from '../repositories/controller-home';
 import { bindRepositoryEntities } from '../repositories/entity-migration';
 import { registerRepository, repositorySummary, resolveRepositorySelection } from '../repositories/registry';
+import { ensureRepositoryRuntimeStorage, type RepositoryRuntimeStorageReport } from '../repositories/runtime-storage';
 import type { RepositoryRecord } from '../repositories/types';
 
 export interface McpServerOptions {
@@ -29,6 +30,22 @@ interface ToolResult {
   structuredContent?: unknown;
   isError?: boolean;
 }
+
+const EXECUTION_STORAGE_TOOLS = new Set([
+  'dispatch_task',
+  'launch_issue',
+  'dispatch_ready_tasks',
+  'retry_task_run',
+  'integrate_task_run',
+  'begin_edit_session',
+  'apply_edit_operations',
+  'create_edit_savepoint',
+  'rollback_edit_session',
+  'finalize_edit_session',
+  'verify_edit_session',
+  'submit_local_bridge_job',
+  'execute_local_bridge_job',
+]);
 
 function parseBooleanSetting(value: string | undefined): boolean | undefined {
   if (value === undefined) return undefined;
@@ -116,13 +133,18 @@ function errorResult(error: unknown): ToolResult {
   };
 }
 
-function withRepositoryEnvelope(result: ToolResult, repository: RepositoryRecord): ToolResult {
+function withRepositoryEnvelope(
+  result: ToolResult,
+  repository: RepositoryRecord,
+  runtimeStorage: RepositoryRuntimeStorageReport,
+): ToolResult {
   const summary = repositorySummary(repository);
   if (result.structuredContent && typeof result.structuredContent === 'object' && !Array.isArray(result.structuredContent)) {
     const structuredContent = {
       ...(result.structuredContent as Record<string, unknown>),
       repoId: repository.repoId,
       repository: summary,
+      runtimeStorage,
     };
     return {
       ...result,
@@ -134,7 +156,7 @@ function withRepositoryEnvelope(result: ToolResult, repository: RepositoryRecord
     ...result,
     content: [
       ...result.content,
-      { type: 'text', text: JSON.stringify({ repoId: repository.repoId, repository: summary }, null, 2) },
+      { type: 'text', text: JSON.stringify({ repoId: repository.repoId, repository: summary, runtimeStorage }, null, 2) },
     ],
   };
 }
@@ -170,6 +192,12 @@ export async function callMultiRepositoryTool(
     const scopedArgs = { ...args };
     delete scopedArgs.repo_id;
     delete scopedArgs.checkout_id;
+
+    const runtimeStorage = ensureRepositoryRuntimeStorage(repository, ctx.controllerHome);
+    if (EXECUTION_STORAGE_TOOLS.has(name) && !runtimeStorage.readyForExecution) {
+      throw new Error(`RUNTIME_STORAGE_NOT_READY: ${runtimeStorage.warnings.join('; ')}`);
+    }
+
     bindRepositoryEntities(repository);
     const scopedContext: McpToolContext = {
       repoRoot: repository.canonicalRoot,
@@ -185,7 +213,7 @@ export async function callMultiRepositoryTool(
     };
     const result = await callMcpTool(scopedContext, name, scopedArgs) as ToolResult;
     bindRepositoryEntities(repository);
-    return withRepositoryEnvelope(result, repository);
+    return withRepositoryEnvelope(result, repository, runtimeStorage);
   } catch (error) {
     return errorResult(error);
   }
