@@ -134,7 +134,7 @@ describe("Controller V4 progress and worklog", () => {
   test("keeps GitHub optional and persists explicit plugin configuration", () => {
     const root = repo();
     const initial = getGitHubPluginStatus(root);
-    expect(initial.enabled).toBe(false);
+    expect(initial.config.enabled).toBe(false);
     expect(initial.config).toEqual(defaultGitHubPluginConfig());
 
     saveGitHubPluginConfig(root, {
