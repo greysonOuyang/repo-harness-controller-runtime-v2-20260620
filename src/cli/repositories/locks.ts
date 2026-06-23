@@ -113,3 +113,18 @@ export function withControllerLock<T>(
     releaseControllerLock(controllerHome, key, lock.lockId);
   }
 }
+
+export async function withControllerLockAsync<T>(
+  controllerHome: string,
+  key: ControllerLockKey,
+  owner: string,
+  operation: () => Promise<T>,
+  ttlMs?: number,
+): Promise<T> {
+  const lock = acquireControllerLock(controllerHome, key, owner, ttlMs);
+  try {
+    return await operation();
+  } finally {
+    releaseControllerLock(controllerHome, key, lock.lockId);
+  }
+}
