@@ -118,7 +118,7 @@ function repositorySnapshot(root: string): RepositoryCommandSnapshot {
   const head = gitText(root, ['rev-parse', '--verify', 'HEAD']) || null;
   const branch = gitText(root, ['branch', '--show-current']) || null;
   const status = gitText(root, ['status', '--porcelain=v1', '--branch']);
-  const refs = gitText(root, ['show-ref', '--heads', '--tags']);
+  const refs = gitText(root, ['show-ref']);
   return {
     head,
     branch,
@@ -196,11 +196,8 @@ export function executeRepositoryCommand(
     return base;
   }
 
-  const explicit = input.authorization === 'explicit_user_request';
   const confirmed = input.authorization === 'confirmed_plan' && input.approvalToken === token;
-  const canExecute = classification.risk === 'readonly'
-    || (classification.confirmation === 'authorization' && (explicit || confirmed))
-    || (classification.confirmation === 'strong_confirmation' && confirmed);
+  const canExecute = classification.risk === 'readonly' || confirmed;
   if (!canExecute) {
     auditCommand(controllerHome, repository, base);
     return base;
