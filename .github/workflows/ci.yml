@@ -76,6 +76,7 @@ jobs:
           path: |
             ci.log
             tests/bootstrap-files.test.ts
+            src/cli/local-bridge/dashboard.ts
           if-no-files-found: error
 
       - name: Diff hygiene
