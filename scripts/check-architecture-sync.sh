@@ -217,12 +217,8 @@ if [[ "$mode" != "off" ]] && { ! command -v bun >/dev/null 2>&1 || [[ ! -f "scri
 fi
 
 if ! bash scripts/architecture-queue.sh reindex --check >/dev/null; then
-  if [[ "$mode" == "strict" ]]; then
-    echo "[ArchitectureSync] strict gate failed: architecture request index is stale; run bash scripts/architecture-queue.sh reindex" >&2
-    exit 1
-  fi
-  echo "[ArchitectureSync] WARN: architecture request index is stale; advisory execution continues" >&2
-  exit 0
+  echo "[ArchitectureSync] architecture request index is stale; run bash scripts/architecture-queue.sh reindex" >&2
+  exit 1
 fi
 
 if [[ "$mode" == "off" ]]; then
