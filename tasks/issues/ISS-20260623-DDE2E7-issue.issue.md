@@ -1,8 +1,8 @@
 ---
 id: "ISS-20260623-DDE2E7"
 kind: "governance"
-status: "in_progress"
-updated_at: "2026-06-23T10:02:05.201Z"
+status: "planned"
+updated_at: "2026-06-23T10:19:10.354Z"
 source: "repo-harness-controller-v8"
 ---
 
@@ -78,7 +78,7 @@ source: "repo-harness-controller-v8"
 
 ### T4 — 重构开源 README 与完整使用文档
 
-- Status: `changes_requested`
+- Status: `blocked`
 - Objective: 完善中英文 README、安装、命令、功能、Controller、Grok 反代、Cloudflare 自定义域名、ChatGPT MCP 连接、repoId 固定绑定和故障排查教程；去除内部化叙述。
 - Depends on: `T3`
 - Allowed paths: `README.md`, `README.zh-CN.md`, `docs/**`, `examples/**`

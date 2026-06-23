@@ -157,3 +157,114 @@
 [repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T09:57:40Z INF precheck component="TCP Connectivity" details="HTTP/2 connection successful" run_id=f65115f5-3f34-4bf2-b86e-90ffcef4feff status=pass target=region2.v2.argotunnel.com
 [repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T09:57:40Z INF precheck component="Cloudflare API" details="API is reachable" run_id=f65115f5-3f34-4bf2-b86e-90ffcef4feff status=pass target=api.cloudflare.com:443
 [repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T09:57:40Z INF precheck complete hard_fail=false run_id=f65115f5-3f34-4bf2-b86e-90ffcef4feff suggested_protocol=http2
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:03Z INF Initiating graceful shutdown due to signal terminated ...
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:05Z INF Retrying connection in up to 1s connIndex=0 event=0 ip=198.18.0.149
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:05Z ERR failed to serve incoming request error="Error shutting down control stream: rpc: connection closed"
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:05Z ERR Connection terminated connIndex=0
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:05Z ERR no more connections active and exiting
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:05Z INF Tunnel server stopped
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:05Z INF Metrics server stopped
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:07Z INF Thank you for trying Cloudflare Tunnel. Doing so, without a Cloudflare account, is a quick way to experiment and try it out. However, be aware that these account-less Tunnels have no uptime guarantee, are subject to the Cloudflare Online Services Terms of Use (https://www.cloudflare.com/website-terms/), and Cloudflare reserves the right to investigate your use of Tunnels for violations of such terms. If you intend to use Tunnels in production you should use a pre-created named tunnel by following: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:07Z INF Requesting new quick Tunnel on trycloudflare.com...
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:11Z INF +--------------------------------------------------------------------------------------------+
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:11Z INF |  Your quick Tunnel has been created! Visit it at (it may take some time to be reachable):  |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:11Z INF |  https://apr-cdt-speeds-retained.trycloudflare.com                                         |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:11Z INF +--------------------------------------------------------------------------------------------+
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:11Z INF Cannot determine default configuration path. No file [config.yml config.yaml] in [~/.cloudflared ~/.cloudflare-warp ~/cloudflare-warp /etc/cloudflared /usr/local/etc/cloudflared]
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:11Z INF Version 2026.6.0 (Checksum c994e7d1096202a7937b485610f1c80ca69cfd822de945ce8d167e6856a2c09e)
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:11Z INF GOOS: darwin, GOVersion: go1.26.4, GoArch: arm64
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:11Z INF Settings: map[ha-connections:1 p:http2 protocol:http2 url:http://127.0.0.1:8865]
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:11Z INF cloudflared will not automatically update if installed by a package manager.
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:11Z INF Generated Connector ID: a3764624-345b-4921-985a-91767d942b1c
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:11Z INF Initial protocol http2
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:11Z INF ICMP proxy will use 192.168.0.103 as source for IPv4
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:11Z INF ICMP proxy will use fe80::1848:8173:cae8:336e in zone en0 as source for IPv6
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:11Z INF Created ICMP proxy listening on 192.168.0.103:0
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:11Z INF ICMP proxy will use 192.168.0.103 as source for IPv4
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:11Z INF ICMP proxy will use fe80::1848:8173:cae8:336e in zone en0 as source for IPv6
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:11Z INF Starting metrics server on 127.0.0.1:20242/metrics
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:11Z INF Tunnel connection curve preferences: [X25519MLKEM768 CurveID(65074) CurveP256] connIndex=0 event=0 ip=198.18.0.148
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:12Z INF Registered tunnel connection connIndex=0 connection=ac4df358-6fcb-48ff-90df-f52255fcfabd event=0 ip=198.18.0.148 location=nrt10 protocol=http2
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:21Z INF +-----------------------------------------------------------------------------------------------+
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:21Z INF |                                    CONNECTIVITY PRE-CHECKS                                    |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:21Z INF +-----------------------------------------------------------------------------------------------+
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:21Z INF |  COMPONENT         TARGET                     STATUS  DETAILS                                 |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:21Z INF |  DNS Resolution    region1.v2.argotunnel.com  PASS    DNS Resolved successfully               |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:21Z INF |  DNS Resolution    region2.v2.argotunnel.com  PASS    DNS Resolved successfully               |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:21Z INF |  UDP Connectivity  region1.v2.argotunnel.com  FAIL    QUIC connection failed                  |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:21Z INF |  UDP Connectivity  region2.v2.argotunnel.com  FAIL    QUIC connection failed                  |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:21Z INF |  TCP Connectivity  region1.v2.argotunnel.com  PASS    HTTP/2 connection successful            |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:21Z INF |  TCP Connectivity  region2.v2.argotunnel.com  PASS    HTTP/2 connection successful            |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:21Z INF |  Cloudflare API    api.cloudflare.com:443     PASS    API is reachable                        |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:21Z INF |  WARNING: Allow outbound QUIC traffic on port 7844 or use HTTP2.                              |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:21Z INF |  WARNING: Allow outbound QUIC traffic on port 7844 or use HTTP2.                              |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:21Z INF |                                                                                               |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:21Z INF |  SUMMARY: Environment ready with degraded transport. cloudflared will proceed using 'http2'.  |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:21Z INF +-----------------------------------------------------------------------------------------------+
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:21Z INF precheck component="DNS Resolution" details="DNS Resolved successfully" run_id=e05ce476-3ff2-4b04-94c9-95248f90a7dd status=pass target=region1.v2.argotunnel.com
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:21Z INF precheck component="DNS Resolution" details="DNS Resolved successfully" run_id=e05ce476-3ff2-4b04-94c9-95248f90a7dd status=pass target=region2.v2.argotunnel.com
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:21Z INF precheck component="UDP Connectivity" details="QUIC connection failed" run_id=e05ce476-3ff2-4b04-94c9-95248f90a7dd status=fail target=region1.v2.argotunnel.com
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:21Z INF precheck component="UDP Connectivity" details="QUIC connection failed" run_id=e05ce476-3ff2-4b04-94c9-95248f90a7dd status=fail target=region2.v2.argotunnel.com
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:21Z INF precheck component="TCP Connectivity" details="HTTP/2 connection successful" run_id=e05ce476-3ff2-4b04-94c9-95248f90a7dd status=pass target=region1.v2.argotunnel.com
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:21Z INF precheck component="TCP Connectivity" details="HTTP/2 connection successful" run_id=e05ce476-3ff2-4b04-94c9-95248f90a7dd status=pass target=region2.v2.argotunnel.com
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:21Z INF precheck component="Cloudflare API" details="API is reachable" run_id=e05ce476-3ff2-4b04-94c9-95248f90a7dd status=pass target=api.cloudflare.com:443
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T10:47:21Z INF precheck complete hard_fail=false run_id=e05ce476-3ff2-4b04-94c9-95248f90a7dd suggested_protocol=http2
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:05:38Z INF Initiating graceful shutdown due to signal terminated ...
+[repo-harness mcp keepalive] cloudflared did not exit after SIGTERM; sending SIGKILL
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:05:45Z INF Thank you for trying Cloudflare Tunnel. Doing so, without a Cloudflare account, is a quick way to experiment and try it out. However, be aware that these account-less Tunnels have no uptime guarantee, are subject to the Cloudflare Online Services Terms of Use (https://www.cloudflare.com/website-terms/), and Cloudflare reserves the right to investigate your use of Tunnels for violations of such terms. If you intend to use Tunnels in production you should use a pre-created named tunnel by following: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:05:45Z INF Requesting new quick Tunnel on trycloudflare.com...
+[repo-harness mcp keepalive] [tunnel:stderr] failed to request quick Tunnel: Post "https://api.trycloudflare.com/tunnel": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:01Z INF Thank you for trying Cloudflare Tunnel. Doing so, without a Cloudflare account, is a quick way to experiment and try it out. However, be aware that these account-less Tunnels have no uptime guarantee, are subject to the Cloudflare Online Services Terms of Use (https://www.cloudflare.com/website-terms/), and Cloudflare reserves the right to investigate your use of Tunnels for violations of such terms. If you intend to use Tunnels in production you should use a pre-created named tunnel by following: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:01Z INF Requesting new quick Tunnel on trycloudflare.com...
+[repo-harness mcp keepalive] cloudflared did not exit after SIGTERM; sending SIGKILL
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:08Z INF Thank you for trying Cloudflare Tunnel. Doing so, without a Cloudflare account, is a quick way to experiment and try it out. However, be aware that these account-less Tunnels have no uptime guarantee, are subject to the Cloudflare Online Services Terms of Use (https://www.cloudflare.com/website-terms/), and Cloudflare reserves the right to investigate your use of Tunnels for violations of such terms. If you intend to use Tunnels in production you should use a pre-created named tunnel by following: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:08Z INF Requesting new quick Tunnel on trycloudflare.com...
+[repo-harness mcp keepalive] [tunnel:stderr] failed to request quick Tunnel: Post "https://api.trycloudflare.com/tunnel": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:23Z INF Thank you for trying Cloudflare Tunnel. Doing so, without a Cloudflare account, is a quick way to experiment and try it out. However, be aware that these account-less Tunnels have no uptime guarantee, are subject to the Cloudflare Online Services Terms of Use (https://www.cloudflare.com/website-terms/), and Cloudflare reserves the right to investigate your use of Tunnels for violations of such terms. If you intend to use Tunnels in production you should use a pre-created named tunnel by following: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:23Z INF Requesting new quick Tunnel on trycloudflare.com...
+[repo-harness mcp keepalive] cloudflared did not exit after SIGTERM; sending SIGKILL
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:31Z INF Thank you for trying Cloudflare Tunnel. Doing so, without a Cloudflare account, is a quick way to experiment and try it out. However, be aware that these account-less Tunnels have no uptime guarantee, are subject to the Cloudflare Online Services Terms of Use (https://www.cloudflare.com/website-terms/), and Cloudflare reserves the right to investigate your use of Tunnels for violations of such terms. If you intend to use Tunnels in production you should use a pre-created named tunnel by following: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:31Z INF Requesting new quick Tunnel on trycloudflare.com...
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:40Z INF +--------------------------------------------------------------------------------------------+
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:40Z INF |  Your quick Tunnel has been created! Visit it at (it may take some time to be reachable):  |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:40Z INF |  https://painting-clone-ink-discretion.trycloudflare.com                                   |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:40Z INF +--------------------------------------------------------------------------------------------+
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:40Z INF Cannot determine default configuration path. No file [config.yml config.yaml] in [~/.cloudflared ~/.cloudflare-warp ~/cloudflare-warp /etc/cloudflared /usr/local/etc/cloudflared]
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:40Z INF Version 2026.6.0 (Checksum c994e7d1096202a7937b485610f1c80ca69cfd822de945ce8d167e6856a2c09e)
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:40Z INF GOOS: darwin, GOVersion: go1.26.4, GoArch: arm64
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:40Z INF Settings: map[ha-connections:1 p:http2 protocol:http2 url:http://127.0.0.1:8865]
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:40Z INF cloudflared will not automatically update if installed by a package manager.
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:40Z INF Generated Connector ID: 3086d761-d4bf-4e09-9e5d-8054fff5b3d2
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:40Z INF Initial protocol http2
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:40Z INF ICMP proxy will use 192.168.0.103 as source for IPv4
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:40Z INF ICMP proxy will use fe80::1848:8173:cae8:336e in zone en0 as source for IPv6
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:40Z INF Created ICMP proxy listening on 192.168.0.103:0
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:40Z INF ICMP proxy will use 192.168.0.103 as source for IPv4
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:40Z INF ICMP proxy will use fe80::1848:8173:cae8:336e in zone en0 as source for IPv6
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:40Z INF Starting metrics server on 127.0.0.1:20242/metrics
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:40Z INF Tunnel connection curve preferences: [X25519MLKEM768 CurveID(65074) CurveP256] connIndex=0 event=0 ip=198.18.0.148
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:41Z INF Registered tunnel connection connIndex=0 connection=ca634482-fbef-42a4-acc5-f31f92e03a87 event=0 ip=198.18.0.148 location=nrt09 protocol=http2
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:50Z INF +-----------------------------------------------------------------------------------------------+
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:50Z INF |                                    CONNECTIVITY PRE-CHECKS                                    |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:50Z INF +-----------------------------------------------------------------------------------------------+
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:50Z INF |  COMPONENT         TARGET                     STATUS  DETAILS                                 |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:50Z INF |  DNS Resolution    region1.v2.argotunnel.com  PASS    DNS Resolved successfully               |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:50Z INF |  DNS Resolution    region2.v2.argotunnel.com  PASS    DNS Resolved successfully               |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:50Z INF |  UDP Connectivity  region1.v2.argotunnel.com  FAIL    QUIC connection failed                  |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:50Z INF |  UDP Connectivity  region2.v2.argotunnel.com  FAIL    QUIC connection failed                  |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:50Z INF |  TCP Connectivity  region1.v2.argotunnel.com  PASS    HTTP/2 connection successful            |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:50Z INF |  TCP Connectivity  region2.v2.argotunnel.com  PASS    HTTP/2 connection successful            |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:50Z INF |  Cloudflare API    api.cloudflare.com:443     PASS    API is reachable                        |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:50Z INF |  WARNING: Allow outbound QUIC traffic on port 7844 or use HTTP2.                              |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:50Z INF |  WARNING: Allow outbound QUIC traffic on port 7844 or use HTTP2.                              |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:50Z INF |                                                                                               |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:50Z INF |  SUMMARY: Environment ready with degraded transport. cloudflared will proceed using 'http2'.  |
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:50Z INF +-----------------------------------------------------------------------------------------------+
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:50Z INF precheck component="DNS Resolution" details="DNS Resolved successfully" run_id=10a38453-5de0-42bb-bc5e-2fb726df3863 status=pass target=region1.v2.argotunnel.com
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:50Z INF precheck component="DNS Resolution" details="DNS Resolved successfully" run_id=10a38453-5de0-42bb-bc5e-2fb726df3863 status=pass target=region2.v2.argotunnel.com
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:50Z INF precheck component="UDP Connectivity" details="QUIC connection failed" run_id=10a38453-5de0-42bb-bc5e-2fb726df3863 status=fail target=region1.v2.argotunnel.com
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:50Z INF precheck component="UDP Connectivity" details="QUIC connection failed" run_id=10a38453-5de0-42bb-bc5e-2fb726df3863 status=fail target=region2.v2.argotunnel.com
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:50Z INF precheck component="TCP Connectivity" details="HTTP/2 connection successful" run_id=10a38453-5de0-42bb-bc5e-2fb726df3863 status=pass target=region1.v2.argotunnel.com
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:50Z INF precheck component="TCP Connectivity" details="HTTP/2 connection successful" run_id=10a38453-5de0-42bb-bc5e-2fb726df3863 status=pass target=region2.v2.argotunnel.com
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:50Z INF precheck component="Cloudflare API" details="API is reachable" run_id=10a38453-5de0-42bb-bc5e-2fb726df3863 status=pass target=api.cloudflare.com:443
+[repo-harness mcp keepalive] [tunnel:stderr] 2026-06-23T11:06:50Z INF precheck complete hard_fail=false run_id=10a38453-5de0-42bb-bc5e-2fb726df3863 suggested_protocol=http2
