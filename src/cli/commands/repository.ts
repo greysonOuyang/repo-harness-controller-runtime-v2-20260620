@@ -13,6 +13,8 @@ import {
   updateRepository,
   validateRepository,
 } from '../repositories/registry';
+import { ensureRepositoryRuntimeStorage } from '../repositories/runtime-storage';
+import type { RepositoryRecord } from '../repositories/types';
 import { buildControllerWorkbench } from '../repositories/workbench';
 import { createUmbrellaIssue, getUmbrellaIssue, listUmbrellaIssues, updateUmbrellaTask } from '../repositories/umbrella';
 
@@ -27,6 +29,12 @@ function common(command: Command): Command {
     .option('--json', 'Output JSON');
 }
 
+function initializeRepository(repository: RepositoryRecord, controllerHome?: string) {
+  const runtimeStorage = ensureRepositoryRuntimeStorage(repository, controllerHome);
+  const migration = bindRepositoryEntities(repository);
+  return { repository, runtimeStorage, migration };
+}
+
 export function buildRepositoryCommand(): Command {
   const command = new Command('repo').description('Register and inspect repositories managed by the global Controller');
 
@@ -38,7 +46,7 @@ export function buildRepositoryCommand(): Command {
     .option('--default-branch <branch>', 'Override default branch'))
     .action((path: string, opts: { controllerHome?: string; name?: string; remote?: string; defaultBranch?: string; json?: boolean }) => {
       const repository = registerRepository({ path, controllerHome: opts.controllerHome, displayName: opts.name, remoteUrl: opts.remote, defaultBranch: opts.defaultBranch });
-      output({ repository, migration: bindRepositoryEntities(repository) }, opts.json === true);
+      output(initializeRepository(repository, opts.controllerHome), opts.json === true);
     });
 
   common(command.command('list').description('List registered repositories')
@@ -54,11 +62,11 @@ export function buildRepositoryCommand(): Command {
       output(getRepository(repoId, opts.controllerHome, { includeRemoved: true }), opts.json === true);
     });
 
-  common(command.command('validate').description('Validate checkout identity and migrate legacy entities')
+  common(command.command('validate').description('Validate checkout identity, runtime storage, and legacy entities')
     .argument('<repo-id>', 'Stable repository ID'))
     .action((repoId: string, opts: { controllerHome?: string; json?: boolean }) => {
       const repository = getRepository(repoId, opts.controllerHome, { includeRemoved: true });
-      output({ validation: validateRepository(repoId, opts.controllerHome), migration: bindRepositoryEntities(repository) }, opts.json === true);
+      output({ validation: validateRepository(repoId, opts.controllerHome), ...initializeRepository(repository, opts.controllerHome) }, opts.json === true);
     });
 
   common(command.command('update').description('Update repository metadata')
@@ -70,11 +78,11 @@ export function buildRepositoryCommand(): Command {
       output(updateRepository(repoId, { displayName: opts.name, defaultBranch: opts.defaultBranch, enabled: opts.enable === true ? true : undefined }, opts.controllerHome), opts.json === true);
     });
 
-  common(command.command('refresh').description('Refresh Git and remote metadata')
+  common(command.command('refresh').description('Refresh Git, remote metadata, runtime storage, and legacy ownership')
     .argument('<repo-id>', 'Stable repository ID'))
     .action((repoId: string, opts: { controllerHome?: string; json?: boolean }) => {
       const repository = refreshRepository(repoId, opts.controllerHome);
-      output({ repository, migration: bindRepositoryEntities(repository) }, opts.json === true);
+      output(initializeRepository(repository, opts.controllerHome), opts.json === true);
     });
 
   common(command.command('disable').description('Disable new execution while retaining history')
