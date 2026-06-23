@@ -42,7 +42,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ci-gate-log
-          path: ci.log
+          path: |
+            ci.log
+            tests/bootstrap-files.test.ts
           if-no-files-found: error
 
       - name: Diff hygiene
