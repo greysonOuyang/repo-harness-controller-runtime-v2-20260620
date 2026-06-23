@@ -2,9 +2,18 @@ function escapeJsonForScript(value: string): string {
   return JSON.stringify(value).replace(/</g, "\\u003c");
 }
 
+function rawUnicodeTemplate(strings: TemplateStringsArray, ...values: unknown[]): string {
+  return strings.raw.map((chunk, index) => {
+    const decoded = chunk.replace(/\\u([0-9a-fA-F]{4})/g, (_match, hex: string) =>
+      String.fromCharCode(Number.parseInt(hex, 16)),
+    );
+    return decoded + (index < values.length ? String(values[index]) : "");
+  }).join("");
+}
+
 export function localBridgeDashboardHtml(token: string): string {
   const encodedToken = escapeJsonForScript(token);
-  return String.raw`<!doctype html>
+  return rawUnicodeTemplate`<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
