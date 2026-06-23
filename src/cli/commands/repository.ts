@@ -1,5 +1,7 @@
 import { Command } from 'commander';
+import { executeRepositoryCommand } from '../repositories/command-executor';
 import { bindRepositoryEntities } from '../repositories/entity-migration';
+import { withControllerLock } from '../repositories/locks';
 import {
   disableRepository,
   focusRepository,
@@ -10,6 +12,7 @@ import {
   registerRepository,
   removeRepository,
   repositorySummary,
+  resolveRepositorySelection,
   updateRepository,
   validateRepository,
 } from '../repositories/registry';
@@ -68,6 +71,60 @@ export function buildRepositoryCommand(): Command {
     .action((repoId: string, opts: { controllerHome?: string; json?: boolean }) => {
       const repository = getRepository(repoId, opts.controllerHome, { includeRemoved: true });
       output({ validation: validateRepository(repoId, opts.controllerHome), ...initializeRepository(repository, opts.controllerHome) }, opts.json === true);
+    });
+
+  common(command.command('command')
+    .description('Execute one repository-scoped local command with risk classification, approval tokens, Git snapshots, and audit evidence')
+    .argument('<repo-id>', 'Stable repository ID')
+    .requiredOption('--cmd <command>', 'Command to execute inside the selected repository')
+    .option('--checkout-id <checkout-id>', 'Select a registered checkout')
+    .option('--cwd <path>', 'Repository-relative working directory', '.')
+    .option('--user-authorized', 'The user explicitly requested this exact state-changing command')
+    .option('--confirm-token <token>', 'Execute a previously previewed plan after explicit confirmation')
+    .option('--dry-run', 'Classify and preview without executing')
+    .option('--timeout-ms <milliseconds>', 'Execution timeout', (value) => Number.parseInt(value, 10))
+    .option('--max-output-bytes <bytes>', 'Maximum captured output', (value) => Number.parseInt(value, 10)))
+    .action((repoId: string, opts: {
+      controllerHome?: string;
+      checkoutId?: string;
+      cmd: string;
+      cwd?: string;
+      userAuthorized?: boolean;
+      confirmToken?: string;
+      dryRun?: boolean;
+      timeoutMs?: number;
+      maxOutputBytes?: number;
+      json?: boolean;
+    }) => {
+      const repository = resolveRepositorySelection({
+        repoId,
+        checkoutId: opts.checkoutId,
+        controllerHome: opts.controllerHome,
+        allowSoleRepository: false,
+      });
+      const authorization = opts.confirmToken
+        ? 'confirmed_plan' as const
+        : opts.userAuthorized
+          ? 'explicit_user_request' as const
+          : undefined;
+      const result = withControllerLock(
+        opts.controllerHome ?? '',
+        { scope: 'repository', repoId: repository.repoId },
+        'cli:repo-command',
+        () => executeRepositoryCommand(opts.controllerHome ?? '', repository, {
+          command: opts.cmd,
+          cwd: opts.cwd,
+          authorization,
+          approvalToken: opts.confirmToken,
+          dryRun: opts.dryRun === true,
+          timeoutMs: opts.timeoutMs,
+          maxOutputBytes: opts.maxOutputBytes,
+        }),
+        Math.min(Math.max(Math.trunc(opts.timeoutMs ?? 120000) + 30000, 60000), 960000),
+      );
+      output(result, opts.json === true);
+      if (result.status === 'approval_required') process.exitCode = 3;
+      else if (result.status === 'executed' && result.ok === false) process.exitCode = 1;
     });
 
   common(command.command('update').description('Update repository metadata')
