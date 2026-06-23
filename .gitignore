@@ -89,3 +89,5 @@ _ops/
 .repo-harness/mcp.oauth-tokens.json
 .repo-harness/mcp.runtime.json
 .ai/harness/local-jobs/
+.ai/harness/mcp/audit.log
+.ai/harness/controller/
