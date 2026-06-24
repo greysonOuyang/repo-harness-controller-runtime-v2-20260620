@@ -53,6 +53,7 @@ describe("install script contracts", () => {
     expect(readme).toContain("docs/public-usage-guide.md");
     expect(zhReadme).toContain("docs/public-usage-guide.zh-CN.md");
     expect(readme).not.toContain("npm install -g repo-harness");
+    expect(pkg.private).toBeUndefined();
     expect(pkg.files).toContain("install.sh");
     expect(pkg.files).toContain("install.ps1");
   });
