@@ -2,7 +2,7 @@
 id: "ISS-20260623-DDE2E7"
 kind: "governance"
 status: "in_progress"
-updated_at: "2026-06-24T07:20:22.522Z"
+updated_at: "2026-06-24T07:26:01.253Z"
 source: "repo-harness-controller-v8"
 ---
 
@@ -108,7 +108,7 @@ source: "repo-harness-controller-v8"
 
 ### T7 — 安全收敛分支并准备 GitHub 公开发布
 
-- Status: `running`
+- Status: `review`
 - Objective: 在所有审计和修复通过后，建立明确的发布候选分支/标签，合并经验证改动，生成最终公开发布核对表；任何分支删除必须单独列出并在获得明确批准后执行。
 - Depends on: `T4`, `T5`, `T6`
 - Allowed paths: `tasks/reports/**`, `docs/**`, `.github/**`
