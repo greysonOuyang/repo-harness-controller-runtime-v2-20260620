@@ -39,7 +39,7 @@ resolve_agentic_dev_root() {
     return 0
   fi
 
-  printf '%s\n' "/Users/ancienttwo/.agents/skills/repo-harness"
+  printf '%s\n' ".repo-harness/skills/repo-harness"
 }
 
 UPSTREAM_ROOT="$(resolve_agentic_dev_root)"

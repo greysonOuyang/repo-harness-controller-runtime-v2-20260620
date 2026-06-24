@@ -12,6 +12,7 @@ import {
 import type { McpServerOptions } from './server';
 import { loadLocalBridgeConfig } from '../local-bridge/job-store';
 import { startLocalBridgeServer, type LocalBridgeServerHandle } from '../local-bridge/server';
+import { runtimePolicy } from './multi-repository';
 import { resolveMcpRepoRoot } from './repo';
 import {
   CONTROLLER_SCHEMA_VERSION,
@@ -20,6 +21,7 @@ import {
   controllerToolSurfaceFingerprint,
   repositoryIdentity,
 } from '../controller/runtime-config';
+import { controllerExpectedToolNames } from './tools';
 
 export interface McpKeepaliveOptions extends McpServerOptions {
   repo?: string;
@@ -193,11 +195,14 @@ async function jsonHealth(url: string): Promise<Record<string, unknown> | null> 
 }
 
 export function isExpectedLocalControllerHealth(payload: Record<string, unknown> | null): boolean {
+  const fingerprint = controllerToolSurfaceFingerprint(
+    controllerExpectedToolNames(runtimePolicy(process.cwd(), { profile: 'controller' })),
+  );
   return payload?.status === 'ok'
     && payload.toolSurface === CONTROLLER_TOOL_SURFACE
     && payload.schemaVersion === CONTROLLER_SCHEMA_VERSION
     && payload.toolSurfaceVersion === CONTROLLER_TOOL_SURFACE_VERSION
-    && payload.toolSurfaceFingerprint === controllerToolSurfaceFingerprint();
+    && payload.toolSurfaceFingerprint === fingerprint;
 }
 
 function attachLineLogging(
@@ -237,10 +242,19 @@ export async function runMcpKeepalive(rawOpts: McpKeepaliveOptions): Promise<voi
   const host = rawOpts.host ?? localConfig?.server?.host ?? '127.0.0.1';
   const port = rawOpts.port ?? localConfig?.server?.port ?? 8765;
   const profile = rawOpts.profile ?? localConfig?.profile ?? 'controller';
+  const policy = runtimePolicy(repoRoot, {
+    profile,
+    enableDevRunner: rawOpts.enableDevRunner,
+    devRunnerAgents: rawOpts.devRunnerAgents,
+    devRunnerTimeoutMs: rawOpts.devRunnerTimeoutMs,
+    devRunnerMaxTimeoutMs: rawOpts.devRunnerMaxTimeoutMs,
+  });
   const expectedToolSurface = profile === 'controller' ? CONTROLLER_TOOL_SURFACE : `${profile}-legacy-v1`;
   const expectedSchemaVersion = profile === 'controller' ? CONTROLLER_SCHEMA_VERSION : 1;
   const expectedToolSurfaceVersion = profile === 'controller' ? CONTROLLER_TOOL_SURFACE_VERSION : 1;
-  const expectedToolSurfaceFingerprint = profile === 'controller' ? controllerToolSurfaceFingerprint() : undefined;
+  const expectedToolSurfaceFingerprint = profile === 'controller'
+    ? controllerToolSurfaceFingerprint(controllerExpectedToolNames(policy))
+    : undefined;
   const expectedRepoId = repositoryIdentity(repoRoot);
   const previousRuntime = loadMcpRuntimeState(repoRoot);
   const existingHealth = await jsonHealth(localHealthUrl(host, port));

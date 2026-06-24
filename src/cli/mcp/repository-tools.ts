@@ -1,4 +1,6 @@
 import { bindRepositoryEntities } from '../repositories/entity-migration';
+import { executeRepositoryCommand } from '../repositories/command-executor';
+import { withControllerLock } from '../repositories/locks';
 import {
   disableRepository,
   getRepository,
@@ -7,6 +9,7 @@ import {
   registerRepository,
   removeRepository,
   repositorySummary,
+  resolveRepositorySelection,
   updateRepository,
   validateRepository,
 } from '../repositories/registry';
@@ -77,7 +80,24 @@ export const repositoryToolDefinitions: McpToolDefinition[] = [
     repo_id: repoId,
     include_removed: { type: 'boolean' },
   }),
+  definition('repository_command_preview', 'Preview one repository-scoped local command with classification, approval token, and Git snapshots.', {
+    repo_id: repoId,
+    checkout_id: { type: 'string', description: 'Optional checkout identity for repositories with multiple local clones.' },
+    command: { type: 'string', description: 'Repository-local shell command to classify and preview.' },
+    cwd: { type: 'string', description: 'Optional repository-relative working directory.' },
+  }, ['command']),
+  definition('repository_command_execute', 'Execute one repository-scoped local command after replaying the exact approved preview token.', {
+    repo_id: repoId,
+    checkout_id: { type: 'string', description: 'Optional checkout identity for repositories with multiple local clones.' },
+    command: { type: 'string', description: 'Repository-local shell command to execute.' },
+    cwd: { type: 'string', description: 'Optional repository-relative working directory.' },
+    approval_token: { type: 'string', description: 'Exact approval token returned by repository_command_preview.' },
+    timeout_ms: { type: 'number', description: 'Optional execution timeout in milliseconds.' },
+    max_output_bytes: { type: 'number', description: 'Optional cap for captured stdout/stderr.' },
+  }, ['command', 'approval_token']),
 ];
+
+export const repositoryToolNames = repositoryToolDefinitions.map((tool) => tool.name);
 
 function result(value: Record<string, unknown>): RepositoryToolResult {
   return {
@@ -138,6 +158,60 @@ export function callRepositoryTool(
           repoId: repoIdValue || undefined,
           includeRemoved: args.include_removed === true,
         }) });
+      case 'repository_command_preview': {
+        const repository = resolveRepositorySelection({
+          repoId: repoIdValue || undefined,
+          checkoutId: typeof args.checkout_id === 'string' ? args.checkout_id : undefined,
+          controllerHome,
+          allowSoleRepository: true,
+        });
+        const execution = withControllerLock(
+          controllerHome,
+          { scope: 'repository', repoId: repository.repoId },
+          'mcp:repository_command_preview',
+          () => executeRepositoryCommand(controllerHome, repository, {
+            command: String(args.command ?? ''),
+            cwd: typeof args.cwd === 'string' ? args.cwd : undefined,
+            dryRun: true,
+          }),
+          60_000,
+        );
+        return result(execution as unknown as Record<string, unknown>);
+      }
+      case 'repository_command_execute': {
+        const repository = resolveRepositorySelection({
+          repoId: repoIdValue || undefined,
+          checkoutId: typeof args.checkout_id === 'string' ? args.checkout_id : undefined,
+          controllerHome,
+          allowSoleRepository: true,
+        });
+        const timeoutMs = typeof args.timeout_ms === 'number'
+          ? args.timeout_ms
+          : typeof args.timeout_ms === 'string'
+            ? Number(args.timeout_ms)
+            : undefined;
+        const maxOutputBytes = typeof args.max_output_bytes === 'number'
+          ? args.max_output_bytes
+          : typeof args.max_output_bytes === 'string'
+            ? Number(args.max_output_bytes)
+            : undefined;
+        const waitMs = Math.min(Math.max(Math.trunc(timeoutMs ?? 120_000) + 30_000, 60_000), 960_000);
+        const execution = withControllerLock(
+          controllerHome,
+          { scope: 'repository', repoId: repository.repoId },
+          'mcp:repository_command_execute',
+          () => executeRepositoryCommand(controllerHome, repository, {
+            command: String(args.command ?? ''),
+            cwd: typeof args.cwd === 'string' ? args.cwd : undefined,
+            authorization: 'confirmed_plan',
+            approvalToken: typeof args.approval_token === 'string' ? args.approval_token : undefined,
+            timeoutMs,
+            maxOutputBytes,
+          }),
+          waitMs,
+        );
+        return result(execution as unknown as Record<string, unknown>);
+      }
       default:
         return failure(new Error(`UNKNOWN_REPOSITORY_TOOL: ${name}`));
     }

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "checkId": "package:check:public-export",
+  "description": "Run package script check:public-export",
+  "source": "package-script",
+  "command": [
+    "bun",
+    "run",
+    "check:public-export"
+  ],
+  "cwd": ".",
+  "ok": true,
+  "status": 0,
+  "timedOut": false,
+  "stdout": "public export ready: /var/folders/6p/24gf5r6n1xlc7s27lnh839lc0000gn/T/repo-harness-public-ssAVpc (392 files)\n",
+  "stderr": "$ bun scripts/public-release.ts\n",
+  "executedAt": "2026-06-23T15:01:56.257Z"
+}

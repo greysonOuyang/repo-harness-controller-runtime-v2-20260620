@@ -1,0 +1,17 @@
+# Runtime and repository-local state must never enter npm artifacts.
+.ai/
+.claude/
+.codex/
+.repo-harness/
+tasks/
+coverage/
+artifacts/
+autoresearch/
+docs/researches/
+docs/repo-harness-*-file-manifest.sha256
+*.log
+*.tgz
+*.tar.gz
+.env
+.env.*
+!.env.example

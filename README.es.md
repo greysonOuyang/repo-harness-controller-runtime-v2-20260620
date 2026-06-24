@@ -23,7 +23,7 @@ Entrega al agente un PRD o Sprint completo; después, tu bucle es solo review an
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | [Français](README.fr.md) | [Español](README.es.md)
 
-Dirección del repositorio: `https://github.com/Ancienttwo/repo-harness`
+Dirección del repositorio: `https://github.com/greysonOuyang/repo-harness-controller-runtime`
 
 ## Por qué usar repo-harness
 
@@ -205,10 +205,10 @@ Bun no existe, instala Bun primero y después instala el CLI `repo-harness`.
 
 ```bash
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/Ancienttwo/repo-harness/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/greysonOuyang/repo-harness-controller-runtime/main/install.sh | sh
 
 # Windows (PowerShell)
-irm https://raw.githubusercontent.com/Ancienttwo/repo-harness/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/greysonOuyang/repo-harness-controller-runtime/main/install.ps1 | iex
 ```
 
 <details>
@@ -419,9 +419,9 @@ Guards habituales:
 
 ## Release actual
 
-- npm package: `repo-harness@1.3.0`
-- Generated workflow stamp: `repo-harness@1.3.0+template@1.3.0`
-- GitHub repository: `Ancienttwo/repo-harness`
+- npm package: `repo-harness@1.4.0`
+- Generated workflow stamp: `repo-harness@1.4.0+template@1.4.0`
+- GitHub repository: `greysonOuyang/repo-harness-controller-runtime`
 - Release history: [`docs/CHANGELOG.md`](docs/CHANGELOG.md)
 
 ## Agradecimientos
@@ -493,12 +493,12 @@ queda como branch command para crear proyectos o módulos nuevos. `hooks-init`, 
 Quienes editan el propio paquete necesitan un checkout del código fuente:
 
 ```bash
-git clone https://github.com/Ancienttwo/repo-harness.git ~/Projects/repo-harness
-cd ~/Projects/repo-harness
+git clone https://github.com/greysonOuyang/repo-harness-controller-runtime.git ~/Projects/repo-harness-controller-runtime
+cd ~/Projects/repo-harness-controller-runtime
 bun src/cli/index.ts update
 ```
 
-`~/Projects/repo-harness` es la única source of truth editable; las rutas locales
+`~/Projects/repo-harness-controller-runtime` es la única source of truth editable; las rutas locales
 de Claude/Codex (`~/.claude/skills/repo-harness`, `~/.codex/skills/repo-harness`)
 son runtime entrypoints respaldados por symlinks. Solo
 `~/.codex/skills/repo-harness` expone `SKILL.md` y `assets/skill-commands/`;

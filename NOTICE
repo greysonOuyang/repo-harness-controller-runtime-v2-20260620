@@ -1,0 +1,13 @@
+repo-harness-controller-runtime
+
+Copyright (c) 2026 greysonOuyang
+
+This project is derived from AncientTwo/repo-harness, Copyright (c) 2026
+AncientTwo, and is distributed under the MIT License retained in LICENSE.
+
+This distribution contains substantial modifications for the ChatGPT Controller,
+repository registry, runtime-storage isolation, Direct Edit workflows, local
+execution bridge, governance, verification, and public-release tooling.
+
+The upstream copyright and permission notice are preserved. Reference to the
+upstream project does not imply endorsement of this derivative work.

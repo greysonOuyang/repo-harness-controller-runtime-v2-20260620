@@ -486,7 +486,7 @@
       "id": "T6",
       "title": "实施开源元数据与发布安全修复",
       "objective": "根据审计结果修正 package 元数据、LICENSE/NOTICE、公开包清单、gitignore、示例配置和敏感信息泄漏点，保持 Controller 行为兼容。",
-      "status": "planned",
+      "status": "blocked",
       "dependsOn": [
         "T2",
         "T3"
@@ -526,11 +526,16 @@
       "recommendedAgent": "codex",
       "notes": [
         "Synced to GitHub: https://github.com/greysonOuyang/repo-harness-controller-runtime/issues/15",
-        "实施必须采用 clean public export / 新公开基线，而不是删除当前内部运行状态后把现有完整历史直接公开，也不得改写或强推现有远程历史。要求：1) 保留 AncientTwo MIT 原版权，新增 NOTICE/衍生来源说明和本项目修改归属；2) 更新 package repository/homepage/bugs 等元数据到 greysonOuyang/repo-harness-controller-runtime，并统一当前公开 SemVer 1.4.0；3) 新增白名单式 public export 脚本与清单，默认排除 .ai/**、运行日志、worktrees、controller state、个人路径研究记录、旧打包快照、内部 tasks evidence；导出后自动扫描 /Users/*、token/private key 模式和符号链接逃逸；4) .gitignore/.npmignore/包 files 共同阻止运行期文件进入公开面；5) 核对并修复 HTTP health 仍硬编码 1.3.0 的版本漂移；6) 审查 Local Controller/HTTP bridge 的认证、Host/Origin/CORS、URL token、health 路径泄漏等发布阻断安全面并补测试；7) check:type、check:ci、check:release 和 public export scan 必须通过。禁止把真实 repo_id/checkout_id/token/本机绝对路径写入公开示例，文档仅使用占位符，用户当前项目的真实绑定只保留在 ChatGPT Project 指令中。"
+        "实施必须采用 clean public export / 新公开基线，而不是删除当前内部运行状态后把现有完整历史直接公开，也不得改写或强推现有远程历史。要求：1) 保留 AncientTwo MIT 原版权，新增 NOTICE/衍生来源说明和本项目修改归属；2) 更新 package repository/homepage/bugs 等元数据到 greysonOuyang/repo-harness-controller-runtime，并统一当前公开 SemVer 1.4.0；3) 新增白名单式 public export 脚本与清单，默认排除 .ai/**、运行日志、worktrees、controller state、个人路径研究记录、旧打包快照、内部 tasks evidence；导出后自动扫描 /Users/*、token/private key 模式和符号链接逃逸；4) .gitignore/.npmignore/包 files 共同阻止运行期文件进入公开面；5) 核对并修复 HTTP health 仍硬编码 1.3.0 的版本漂移；6) 审查 Local Controller/HTTP bridge 的认证、Host/Origin/CORS、URL token、health 路径泄漏等发布阻断安全面并补测试；7) check:type、check:ci、check:release 和 public export scan 必须通过。禁止把真实 repo_id/checkout_id/token/本机绝对路径写入公开示例，文档仅使用占位符，用户当前项目的真实绑定只保留在 ChatGPT Project 指令中。",
+        "User explicitly authorized execution. Start with open-source safety and Git hygiene: prevent runtime logs/controller state from entering Git or npm artifacts, preserve local runtime files, and avoid destructive branch/history operations.",
+        "Dispatched RUN-iss-20260623-dde2e7-t6-1782216776704-73bf8513 to codex.",
+        "RUN-iss-20260623-dde2e7-t6-1782216776704-73bf8513 cancelled; explicit retry is required before another Run can be created."
       ],
-      "runIds": [],
+      "runIds": [
+        "RUN-iss-20260623-dde2e7-t6-1782216776704-73bf8513"
+      ],
       "createdAt": "2026-06-23T08:46:30.234Z",
-      "updatedAt": "2026-06-23T09:22:45.395Z",
+      "updatedAt": "2026-06-23T13:31:21.871Z",
       "repoId": "repo_123b7cf58b6b17b5cbe46a56",
       "github": {
         "owner": "greysonOuyang",
@@ -584,10 +589,54 @@
         "url": "https://github.com/greysonOuyang/repo-harness-controller-runtime/issues/16",
         "syncedAt": "2026-06-23T08:49:10.527Z"
       }
+    },
+    {
+      "id": "T8",
+      "title": "清理 Git 跟踪运行文件、残留 Worktree 与版本分支",
+      "objective": "在 T6 发布安全修复集成后，审计并解除所有运行日志、Controller 状态、真实 repository binding、jobs、edit sessions、artifacts、local bridge 和临时 worktree 文件的 Git 跟踪；保留本地运行文件但从当前版本树删除。清理仅属于已结束 Run 的残留 worktree 和 controller 临时分支，收敛 main/release/feature 关系，并将当前树中的删除通过普通提交同步到远端。不得改写历史、force push、删除活跃 worktree 或删除未合并的唯一提交。",
+      "status": "planned",
+      "dependsOn": [
+        "T6"
+      ],
+      "allowedPaths": [
+        ".gitignore",
+        ".npmignore",
+        ".ai/harness/mcp/audit.log",
+        ".ai/harness/repository.json",
+        ".ai/harness/**",
+        "tasks/reports/**",
+        "docs/**",
+        ".github/**"
+      ],
+      "forbiddenPaths": [
+        "src/**",
+        "package.json",
+        "LICENSE",
+        "NOTICE"
+      ],
+      "checks": [
+        "check:ci",
+        "check:release"
+      ],
+      "acceptanceCriteria": [
+        "所有运行日志、Controller 状态、真实 repoId/checkoutId 和本地凭据文件不再由 Git 跟踪",
+        "本地运行文件在解除跟踪后仍可由 Controller 使用",
+        "只清理终态 Run 对应的残留 worktree 和临时 controller 分支",
+        "main、release 和 feature 的 ahead/behind 与合并关系形成报告",
+        "远端当前版本树不再包含被清理的 tracked 运行文件",
+        "不执行历史重写或 force push，且不丢失未合并唯一提交"
+      ],
+      "risk": "destructive",
+      "recommendedAgent": "codex",
+      "notes": [],
+      "runIds": [],
+      "createdAt": "2026-06-23T13:27:13.655Z",
+      "updatedAt": "2026-06-23T13:27:13.655Z",
+      "repoId": "repo_123b7cf58b6b17b5cbe46a56"
     }
   ],
   "createdAt": "2026-06-23T08:46:30.234Z",
-  "updatedAt": "2026-06-23T10:19:10.354Z",
+  "updatedAt": "2026-06-23T13:31:21.871Z",
   "repoId": "repo_123b7cf58b6b17b5cbe46a56",
   "github": {
     "owner": "greysonOuyang",

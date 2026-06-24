@@ -10,7 +10,7 @@ import {
   controllerToolSurfaceFingerprint,
 } from "../../src/cli/controller/runtime-config";
 import { getMcpPolicy } from "../../src/cli/mcp/policy";
-import { buildMcpToolDefinitions, callMcpTool, type McpToolContext } from "../../src/cli/mcp/tools";
+import { buildMcpToolDefinitions, callMcpTool, controllerExpectedToolNames, type McpToolContext } from "../../src/cli/mcp/tools";
 
 const roots: string[] = [];
 
@@ -50,7 +50,9 @@ describe("MCP v7 compatibility on the V8 surface", () => {
     expect(capabilities.toolSurface).toBe(CONTROLLER_TOOL_SURFACE);
     expect(capabilities.schemaVersion).toBe(CONTROLLER_SCHEMA_VERSION);
     expect(capabilities.toolSurfaceVersion).toBe(CONTROLLER_TOOL_SURFACE_VERSION);
-    expect(capabilities.toolSurfaceFingerprint).toBe(controllerToolSurfaceFingerprint());
+    expect(capabilities.toolSurfaceFingerprint).toBe(
+      controllerToolSurfaceFingerprint(controllerExpectedToolNames(ctx.policy)),
+    );
     expect(capabilities.capabilities.taskLocalReadiness).toBe(true);
     expect(capabilities.capabilities.singleExecutionFocus).toBe(false);
   });

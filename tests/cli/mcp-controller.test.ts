@@ -15,8 +15,10 @@ import { getMcpPolicy } from "../../src/cli/mcp/policy";
 import {
   buildMcpToolDefinitions,
   callMcpTool,
+  controllerExpectedToolNames,
   type McpToolContext,
 } from "../../src/cli/mcp/tools";
+import { controllerToolSurfaceFingerprint } from "../../src/cli/controller/runtime-config";
 
 async function jsonTool(
   ctx: McpToolContext,
@@ -100,15 +102,25 @@ describe("MCP controller profile", () => {
       expect(names).toContain("export_worklog");
       expect(names).toContain("get_github_plugin_status");
       expect(names).toContain("configure_github_plugin");
+      expect(names).toContain("repository_command_preview");
+      expect(names).toContain("repository_command_execute");
       const capabilities = await jsonTool(
         { ...ctx, policy: overridden },
         "controller_capabilities",
       );
       expect(capabilities.value.toolSurface).toBe(
-        "controller-execution-first-v7",
+        "controller-chatgpt-bridge-v8",
       );
       expect(capabilities.value.expectedTools).toContain("launch_issue");
       expect(capabilities.value.expectedTools).toContain("submit_local_job");
+      expect(capabilities.value.expectedTools).toContain("repository_command_preview");
+      expect(capabilities.value.expectedTools).toContain("repository_command_execute");
+      expect(capabilities.value.expectedTools).toEqual(
+        controllerExpectedToolNames(overridden),
+      );
+      expect(capabilities.value.toolSurfaceFingerprint).toBe(
+        controllerToolSurfaceFingerprint(controllerExpectedToolNames(overridden)),
+      );
       expect(capabilities.value.capabilities.directEditFirstRouting).toBe(true);
       expect(capabilities.value.expectedTools).toContain("verify_edit_session");
       const source = await jsonTool(

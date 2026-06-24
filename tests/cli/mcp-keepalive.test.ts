@@ -5,6 +5,9 @@ import {
   isExpectedLocalControllerHealth,
   normalizeKeepalivePublicEndpoint,
 } from '../../src/cli/mcp/keepalive';
+import { runtimePolicy } from '../../src/cli/mcp/multi-repository';
+import { controllerExpectedToolNames } from '../../src/cli/mcp/tools';
+import { controllerToolSurfaceFingerprint } from '../../src/cli/controller/runtime-config';
 
 describe('mcp keepalive helpers', () => {
   test('extracts quick tunnel URLs from cloudflared logs', () => {
@@ -34,13 +37,16 @@ describe('mcp keepalive helpers', () => {
   });
 
   test('recognizes the expected local controller health payload', () => {
+    const fingerprint = controllerToolSurfaceFingerprint(
+      controllerExpectedToolNames(runtimePolicy(process.cwd(), { profile: 'controller' })),
+    );
     expect(
       isExpectedLocalControllerHealth({
         status: 'ok',
         toolSurface: 'controller-chatgpt-bridge-v8',
         schemaVersion: 10,
         toolSurfaceVersion: 8,
-        toolSurfaceFingerprint: '13b4720825d62e08',
+        toolSurfaceFingerprint: fingerprint,
       }),
     ).toBe(true);
     expect(

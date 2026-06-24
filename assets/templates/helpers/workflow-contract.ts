@@ -153,7 +153,7 @@ export function resolveAgenticDevRoot(_repoRoot = REPO_ROOT): string {
     return candidates[0];
   }
 
-  return "/Users/ancienttwo/.agents/skills/repo-harness";
+  return join(".repo-harness", "skills", "repo-harness");
 }
 
 export function resolveAgenticDevSkillRoot(repoRoot = REPO_ROOT): string {

@@ -3,12 +3,18 @@
   "version": "1.4.0",
   "description": "Installs, migrates, audits, and repairs repo-local agentic development harnesses",
   "license": "MIT",
+  "author": "greysonOuyang",
+  "homepage": "https://github.com/greysonOuyang/repo-harness-controller-runtime#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Ancienttwo/repo-harness.git"
+    "url": "git+https://github.com/greysonOuyang/repo-harness-controller-runtime.git"
+  },
+  "bugs": {
+    "url": "https://github.com/greysonOuyang/repo-harness-controller-runtime/issues"
   },
   "type": "module",
   "files": [
+    "NOTICE",
     ".agents/skills/repo-harness-chatgpt-browser/",
     "scripts/verify-controller-v8.sh",
     ".agents/skills/repo-harness-chatgpt-bridge/",
@@ -22,17 +28,13 @@
     "docs/repo-harness-local-execution-bridge.md",
     "docs/repo-harness-progress-ledger-v4.md",
     "docs/repo-harness-v4-verification.md",
-    "docs/repo-harness-v4-file-manifest.sha256",
     "docs/repo-harness-execution-closure-v5.md",
     "docs/repo-harness-v5-verification.md",
-    "docs/repo-harness-v5-file-manifest.sha256",
     "docs/repo-harness-direct-change-v6.md",
     "docs/repo-harness-v6-verification.md",
     "docs/repo-harness-execution-first-v7.md",
     "docs/repo-harness-chatgpt-bridge-v8.md",
     "docs/repo-harness-v8-verification.md",
-    "docs/repo-harness-v8-file-manifest.sha256",
-    "docs/repo-harness-v6-file-manifest.sha256",
     "README.zh-CN.md",
     "install.sh",
     "install.ps1",
@@ -54,9 +56,11 @@
     "benchmark:skills": "bun scripts/run-skill-evals.ts",
     "test": "bun test",
     "test:coverage": "bun test --coverage",
-    "check:type": "tsc --noEmit",
+    "check:type": "node node_modules/typescript/bin/tsc --noEmit",
     "check:ci": "bash scripts/check-ci.sh",
     "check:release": "bash scripts/check-npm-release.sh",
+    "check:release-surface": "bash scripts/check-public-release-surface.sh",
+    "check:public-export": "bun scripts/public-release.ts",
     "check:release-published": "bash scripts/check-release-published.sh",
     "smoke:tarball-install": "bash scripts/check-tarball-install-smoke.sh",
     "check:brain-manifest": "repo-harness run check-brain-manifest",
@@ -83,6 +87,5 @@
     "@modelcontextprotocol/sdk": "^1.28.0",
     "commander": "^14.0.3",
     "express": "^5.2.1"
-  },
-  "private": true
+  }
 }

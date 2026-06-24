@@ -18,7 +18,7 @@ import {
 } from '../auth';
 import { createMcpOAuthProvider, McpOAuthTokenStore } from '../oauth';
 import { resolveMcpRepoRoot } from '../repo';
-import { buildMcpToolDefinitions } from '../tools';
+import { buildMcpToolDefinitions, controllerExpectedToolNames } from '../tools';
 import {
   CONTROLLER_SCHEMA_VERSION,
   CONTROLLER_TOOL_SURFACE,
@@ -315,11 +315,14 @@ export async function startMcpHttp(opts: McpHttpOptions): Promise<void> {
   const transports = new Map<string, StreamableHTTPServerTransport>();
   const toolContext = createMcpToolContext({ ...opts, repo: repoRoot });
   const toolDefinitions = buildMcpToolDefinitions(toolContext.policy, { enableChatgptBrowser: opts.enableChatgptBrowser === true });
+  const controllerToolNames = toolContext.policy.profile === 'controller'
+    ? controllerExpectedToolNames(toolContext.policy, { enableChatgptBrowser: opts.enableChatgptBrowser === true })
+    : [];
   const toolSurface = toolContext.policy.profile === 'controller' ? CONTROLLER_TOOL_SURFACE : `${toolContext.policy.profile}-legacy-v1`;
   const toolSurfaceSchemaVersion = toolContext.policy.profile === 'controller' ? CONTROLLER_SCHEMA_VERSION : 1;
   const toolSurfaceVersion = toolContext.policy.profile === 'controller' ? CONTROLLER_TOOL_SURFACE_VERSION : 1;
   const toolSurfaceFingerprint = toolContext.policy.profile === 'controller'
-    ? controllerToolSurfaceFingerprint()
+    ? controllerToolSurfaceFingerprint(controllerToolNames)
     : undefined;
   const repoId = repositoryIdentity(repoRoot);
   const startedAt = new Date().toISOString();
@@ -334,7 +337,7 @@ export async function startMcpHttp(opts: McpHttpOptions): Promise<void> {
     res.json({
       status: 'ok',
       server: 'repo-harness-mcp',
-      version: '1.3.0',
+      version: '1.4.0',
       profile: toolContext.policy.profile,
       toolSurface,
       schemaVersion: toolSurfaceSchemaVersion,

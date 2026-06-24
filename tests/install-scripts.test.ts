@@ -44,14 +44,14 @@ describe("install script contracts", () => {
     const zhReadme = read("README.zh-CN.md");
     const pkg = JSON.parse(read("package.json"));
 
-    expect(readme).toContain("curl -fsSL https://raw.githubusercontent.com/Ancienttwo/repo-harness/main/install.sh | sh");
-    expect(readme).toContain("irm https://raw.githubusercontent.com/Ancienttwo/repo-harness/main/install.ps1 | iex");
+    expect(readme).toContain("curl -fsSL https://raw.githubusercontent.com/greysonOuyang/repo-harness-controller-runtime/main/install.sh | sh");
+    expect(readme).toContain("irm https://raw.githubusercontent.com/greysonOuyang/repo-harness-controller-runtime/main/install.ps1 | iex");
     expect(readme).toContain("<summary>Already have Bun? Use Bun directly, or npx as a fallback</summary>");
     expect(readme).toContain("bun add -g repo-harness");
     expect(readme).toContain("npx -y repo-harness install");
     expect(readme).not.toContain("npm install -g repo-harness");
-    expect(zhReadme).toContain("curl -fsSL https://raw.githubusercontent.com/Ancienttwo/repo-harness/main/install.sh | sh");
-    expect(zhReadme).toContain("irm https://raw.githubusercontent.com/Ancienttwo/repo-harness/main/install.ps1 | iex");
+    expect(zhReadme).toContain("curl -fsSL https://raw.githubusercontent.com/greysonOuyang/repo-harness-controller-runtime/main/install.sh | sh");
+    expect(zhReadme).toContain("irm https://raw.githubusercontent.com/greysonOuyang/repo-harness-controller-runtime/main/install.ps1 | iex");
     expect(pkg.files).toContain("install.sh");
     expect(pkg.files).toContain("install.ps1");
   });

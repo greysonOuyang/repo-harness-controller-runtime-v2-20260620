@@ -1,7 +1,3 @@
-function escapeJsonForScript(value: string): string {
-  return JSON.stringify(value).replace(/</g, "\\u003c");
-}
-
 function rawUnicodeTemplate(strings: TemplateStringsArray, ...values: unknown[]): string {
   return strings.raw.map((chunk, index) => {
     const decoded = chunk.replace(/\\u([0-9a-fA-F]{4})/g, (_match, hex: string) =>
@@ -11,8 +7,7 @@ function rawUnicodeTemplate(strings: TemplateStringsArray, ...values: unknown[])
   }).join("");
 }
 
-export function localBridgeDashboardHtml(token: string): string {
-  const encodedToken = escapeJsonForScript(token);
+export function localBridgeDashboardHtml(): string {
   return rawUnicodeTemplate`<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -59,14 +54,13 @@ dialog{border:1px solid var(--line);border-radius:15px;background:var(--surface)
 <dialog id="dialog"><div class="dialogHead"><div><h3 id="dialogTitle"></h3><p id="dialogSub"></p></div><button onclick="dialog.close()">×</button></div><div class="dialogBody" id="dialogBody"></div></dialog>
 <div class="toast" id="toast"></div>
 <script>
-const TOKEN=${encodedToken};
 let state=null;let activityFilter='all';let openRunId=null;let runRefreshTimer=null;
 const dialog=document.getElementById('dialog');
 const esc=function(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]})};
 const fmt=function(v){if(!v)return '—';try{return new Date(v).toLocaleString()}catch(_e){return String(v)}};
 const statusClass=function(v){v=String(v||'');if(/done|succeed|verified|finalized|checked|passed|healthy/.test(v))return 'green';if(/fail|blocked|cancel|error|check_failed/.test(v))return 'red';if(/running|queued|review|dirty|planned|ready/.test(v))return 'amber';return 'blue'};
 const badge=function(v){return '<span class="badge '+statusClass(v)+'">'+esc(v||'unknown')+'</span>'};
-async function api(path,opts){opts=opts||{};const r=await fetch(path+(path.includes('?')?'&':'?')+'token='+encodeURIComponent(TOKEN),Object.assign({headers:{'content-type':'application/json','x-repo-harness-local-token':TOKEN}},opts));const body=await r.json().catch(function(){return{}});if(!r.ok)throw new Error(body.error||('HTTP '+r.status));return body}
+async function api(path,opts){opts=opts||{};const headers=Object.assign({'content-type':'application/json'},opts.headers||{});const r=await fetch(path,Object.assign({},opts,{credentials:'same-origin',headers:headers}));const body=await r.json().catch(function(){return{}});if(!r.ok)throw new Error(body.error||('HTTP '+r.status));return body}
 function toastMsg(v){const el=document.getElementById('toast');el.textContent=v;el.classList.add('show');setTimeout(function(){el.classList.remove('show')},2200)}
 function activeIssues(){return (state.board.issues||[]).filter(function(i){return !i.archivedAt&&i.lifecycleStatus!=='archived'&&i.status!=='done'&&i.status!=='cancelled'})}
 function activeRuns(){return (state.runs||[]).filter(function(r){return ['queued','running','waiting_for_user'].includes(r.status)})}
@@ -108,7 +102,7 @@ async function finalizeEdit(id){try{await api('/api/edit-sessions/'+encodeURICom
 async function rollbackEdit(id){if(!confirm('确认回滚此 Session 的全部修改？'))return;try{await api('/api/edit-sessions/'+encodeURIComponent(id)+'/rollback',{method:'POST',body:'{}'});toastMsg('已回滚');dialog.close();await refresh()}catch(e){toastMsg(e.message)}}
 document.querySelectorAll('.nav button').forEach(function(b){b.addEventListener('click',function(){document.querySelectorAll('.nav button').forEach(function(x){x.classList.remove('active')});b.classList.add('active');document.querySelectorAll('.view').forEach(function(x){x.classList.remove('active')});document.getElementById('view-'+b.dataset.view).classList.add('active');const names={overview:['概览','当前工作、运行状态与真实阻塞'],work:['工作项','Issue → Task → Execution 分层视图'],activity:['活动','Agent、Direct Edit、Checks 与 Git 的统一记录'],settings:['设置','Agent、Connector、Checks、GitHub 与高级诊断']};document.getElementById('pageTitle').textContent=names[b.dataset.view][0];document.getElementById('pageSub').textContent=names[b.dataset.view][1]})});
 document.getElementById('workSearch').addEventListener('input',function(){if(state)renderWork()});document.getElementById('workFilter').addEventListener('change',function(){if(state)renderWork()});document.querySelectorAll('#activityTabs button').forEach(function(b){b.addEventListener('click',function(){document.querySelectorAll('#activityTabs button').forEach(function(x){x.classList.remove('active')});b.classList.add('active');activityFilter=b.dataset.filter;renderActivity()})});document.getElementById('refreshBtn').onclick=refresh;document.getElementById('themeBtn').onclick=function(){const d=document.documentElement;d.dataset.theme=d.dataset.theme==='dark'?'light':'dark'};dialog.addEventListener('close',function(){openRunId=null;if(runRefreshTimer){clearTimeout(runRefreshTimer);runRefreshTimer=null}});
-const es=new EventSource('/api/stream?token='+encodeURIComponent(TOKEN));es.addEventListener('connected',function(){document.getElementById('streamState').textContent='已连接'});es.addEventListener('refresh',refresh);es.onerror=function(){document.getElementById('streamState').textContent='连接重试中'};refresh();
+const es=new EventSource('/api/stream');es.addEventListener('connected',function(){document.getElementById('streamState').textContent='已连接'});es.addEventListener('refresh',refresh);es.onerror=function(){document.getElementById('streamState').textContent='连接重试中'};refresh();
 </script>
 </body>
 </html>`;

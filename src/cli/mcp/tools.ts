@@ -131,6 +131,7 @@ import { hashMcpInput, tryWriteMcpAuditEntry } from "./audit";
 import { loadMcpRuntimeState } from "./auth";
 import { resolveMcpPath } from "./paths";
 import { currentGitBranch, isRepoHarnessAdopted } from "./repo";
+import { repositoryToolNames } from "./repository-tools";
 import { redactMcpText } from "./redaction";
 import type { McpAgentRunnerName, McpPolicy } from "./types";
 
@@ -2411,6 +2412,14 @@ export function buildMcpToolDefinitions(
   return tools;
 }
 
+export function controllerExpectedToolNames(
+  policy: McpPolicy,
+  opts: { enableChatgptBrowser?: boolean } = {},
+): string[] {
+  const names = buildMcpToolDefinitions(policy, opts).map((tool) => tool.name);
+  return policy.profile === "controller" ? [...repositoryToolNames, ...names] : names;
+}
+
 export async function callMcpTool(
   ctx: McpToolContext,
   name: string,
@@ -2493,11 +2502,14 @@ export async function callMcpTool(
             "TOOL_DISABLED",
             "controller_capabilities requires the controller profile",
           );
+        const expectedTools = controllerExpectedToolNames(ctx.policy, {
+          enableChatgptBrowser: ctx.enableChatgptBrowser === true,
+        });
         const payload = {
           schemaVersion: CONTROLLER_SCHEMA_VERSION,
           toolSurface: CONTROLLER_TOOL_SURFACE,
           toolSurfaceVersion: CONTROLLER_TOOL_SURFACE_VERSION,
-          toolSurfaceFingerprint: controllerToolSurfaceFingerprint(),
+          toolSurfaceFingerprint: controllerToolSurfaceFingerprint(expectedTools),
           executionModel: "chatgpt-controller-execution-bridge",
           profile: ctx.policy.profile,
           capabilities: {
@@ -2562,44 +2574,7 @@ export async function callMcpTool(
             ),
             note: "Requested timeout values are validated explicitly and are never silently reduced to the default.",
           },
-          expectedTools: [
-            "controller_capabilities",
-            "local_bridge_status",
-            "submit_local_job",
-            "list_local_jobs",
-            "get_local_job",
-            "project_snapshot",
-            "search_repository",
-            "assess_work_request",
-            "create_issue",
-            "get_project_governance",
-            "reconcile_project_governance",
-            "get_project_state",
-            "set_current_issue",
-            "archive_issue",
-            "restore_issue",
-            "inspect_issue_readiness",
-            "inspect_task_readiness",
-            "prepare_issue_launch",
-            "publish_issue_to_github",
-            "launch_issue",
-            "dispatch_task",
-            "get_task_run",
-            "get_task_run_events",
-            "get_task_run_log",
-            "get_task_diff",
-            "integrate_task_run",
-            "verify_task",
-            "accept_task",
-            "begin_edit_session",
-            "apply_patch",
-            "get_edit_session",
-            "list_edit_sessions",
-            "get_edit_session_diff",
-            "verify_edit_session",
-            "finalize_edit_session",
-            "rollback_edit_session",
-          ],
+          expectedTools,
           docs: [
             "docs/repo-harness-chatgpt-controller.md",
             "docs/repo-harness-github-issue-launcher.md",

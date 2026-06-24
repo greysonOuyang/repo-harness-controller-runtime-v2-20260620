@@ -78,6 +78,8 @@ import {
 import { taskExecutionPolicy, taskWriteScopesConflict } from "../controller/execution-policy";
 import { continueTaskAfterSuccessfulRun } from "../controller/execution-completion";
 import { getMcpPolicy } from "../mcp/policy";
+import { runtimePolicy } from "../mcp/multi-repository";
+import { controllerExpectedToolNames } from "../mcp/tools";
 import { loadMcpLocalConfig, loadMcpRuntimeState } from "../mcp/auth";
 
 export interface LocalBridgeServerOptions {
@@ -97,12 +99,44 @@ export interface LocalBridgeServerHandle {
   close(): Promise<void>;
 }
 
+function normalizeHostname(hostname: string): string {
+  return hostname.replace(/^\[|\]$/g, "").toLowerCase();
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return ["127.0.0.1", "localhost", "::1"].includes(normalizeHostname(hostname));
+}
+
 function assertLoopback(host: string): void {
-  if (!["127.0.0.1", "localhost", "::1"].includes(host)) {
+  if (!isLoopbackHostname(host)) {
     throw new Error(
       `local controller must bind to a loopback address, received: ${host}`,
     );
   }
+}
+
+function parsedRequestHost(value: string | undefined): URL | undefined {
+  if (!value) return undefined;
+  try {
+    return new URL(`http://${value}`);
+  } catch (_error) {
+    return undefined;
+  }
+}
+
+function cookieValue(request: Request, name: string): string | undefined {
+  const raw = request.headers.cookie;
+  if (!raw) return undefined;
+  for (const part of raw.split(";")) {
+    const [key, ...valueParts] = part.trim().split("=");
+    if (key !== name) continue;
+    try {
+      return decodeURIComponent(valueParts.join("="));
+    } catch (_error) {
+      return undefined;
+    }
+  }
+  return undefined;
 }
 
 function openUrl(url: string): void {
@@ -175,11 +209,13 @@ export function buildLocalControllerSnapshot(repoRoot: string) {
   const runs = listAgentJobs(repoRoot, 100);
   const mcpConfig = loadMcpLocalConfig(repoRoot);
   const mcpRuntime = loadMcpRuntimeState(repoRoot);
+  const expectedPolicy = runtimePolicy(repoRoot, { profile: "controller" });
+  const expectedToolNames = controllerExpectedToolNames(expectedPolicy);
   const runtimeSurface = mcpRuntime?.server?.toolSurface;
   const runtimeSchemaVersion = mcpRuntime?.server?.schemaVersion;
   const runtimeSurfaceVersion = mcpRuntime?.server?.toolSurfaceVersion;
   const runtimeFingerprint = mcpRuntime?.server?.toolSurfaceFingerprint;
-  const expectedFingerprint = controllerToolSurfaceFingerprint();
+  const expectedFingerprint = controllerToolSurfaceFingerprint(expectedToolNames);
   const runtimeProfile = mcpRuntime?.server?.profile;
   const connectorHealthy =
     mcpRuntime?.server?.healthy === true &&
@@ -248,7 +284,32 @@ export async function startLocalBridgeServer(
   assertLoopback(host);
   const token = options.token ?? randomBytes(32).toString("base64url");
   const app = express();
+  const cookieName = "repo_harness_local_token";
   app.disable("x-powered-by");
+  app.use((request, response, next) => {
+    const requestHost = parsedRequestHost(request.headers.host);
+    if (!requestHost || !isLoopbackHostname(requestHost.hostname)) {
+      response.status(403).json({ error: "invalid local controller host" });
+      return;
+    }
+    const origin = request.headers.origin;
+    if (origin) {
+      try {
+        const parsedOrigin = new URL(origin);
+        if (
+          !isLoopbackHostname(parsedOrigin.hostname) ||
+          parsedOrigin.host !== requestHost.host
+        ) {
+          response.status(403).json({ error: "invalid local controller origin" });
+          return;
+        }
+      } catch (_error) {
+        response.status(403).json({ error: "invalid local controller origin" });
+        return;
+      }
+    }
+    next();
+  });
   app.use(express.json({ limit: "512kb" }));
 
   const requireToken = (
@@ -256,7 +317,8 @@ export async function startLocalBridgeServer(
     response: Response,
     next: NextFunction,
   ): void => {
-    const supplied = request.header("x-repo-harness-local-token") ?? queryString(request.query.token);
+    const supplied =
+      request.header("x-repo-harness-local-token") ?? cookieValue(request, cookieName);
     if (supplied !== token) {
       response.status(403).json({ error: "invalid local controller token" });
       return;
@@ -268,34 +330,22 @@ export async function startLocalBridgeServer(
     response.setHeader("Cache-Control", "no-store, max-age=0");
     response.setHeader("Pragma", "no-cache");
     response.setHeader("Expires", "0");
-    response.type("html").send(localBridgeDashboardHtml(token));
+    response.setHeader("Referrer-Policy", "no-referrer");
+    response.setHeader(
+      "Set-Cookie",
+      `${cookieName}=${encodeURIComponent(token)}; Path=/api; HttpOnly; SameSite=Strict`,
+    );
+    response.type("html").send(localBridgeDashboardHtml());
   });
   app.get("/health", (_request, response) => {
+    const toolNames = controllerExpectedToolNames(runtimePolicy(options.repoRoot, { profile: "controller" }));
     response.json({
       status: "ok",
-      repoRoot: options.repoRoot,
       localOnly: true,
       toolSurface: CONTROLLER_TOOL_SURFACE,
       schemaVersion: CONTROLLER_SCHEMA_VERSION,
       toolSurfaceVersion: CONTROLLER_TOOL_SURFACE_VERSION,
-      toolSurfaceFingerprint: controllerToolSurfaceFingerprint(),
-      timeoutPolicy: localBridgeTimeoutPolicy(options.repoRoot),
-      features: [
-        "project-progress",
-        "task-history",
-        "worklog-ledger",
-        "server-sent-events",
-        "github-plugin",
-        "execution-focus",
-        "governance-reconciliation",
-        "direct-task-actions",
-        "direct-edit-first",
-        "edit-session-diffs",
-        "edit-session-verification",
-        "multi-revision-direct-edit",
-        "runtime-agent-selection",
-        "hierarchical-work-ui",
-      ],
+      toolSurfaceFingerprint: controllerToolSurfaceFingerprint(toolNames),
     });
   });
 

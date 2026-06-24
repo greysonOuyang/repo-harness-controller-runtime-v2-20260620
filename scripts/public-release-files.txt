@@ -1,0 +1,24 @@
+# Public release allowlist. Directory entries are recursive.
+.gitignore
+.npmignore
+.github/
+.agents/
+AGENTS.md
+CLAUDE.md
+LICENSE
+NOTICE
+README.md
+README.zh-CN.md
+README.ja.md
+README.es.md
+README.fr.md
+SKILL.md
+agents/
+assets/
+bun.lock
+install.ps1
+install.sh
+package.json
+scripts/
+src/
+tsconfig.json

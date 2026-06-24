@@ -5,9 +5,15 @@ export const CONTROLLER_TOOL_SURFACE = 'controller-chatgpt-bridge-v8';
 export const CONTROLLER_SCHEMA_VERSION = 10;
 export const CONTROLLER_TOOL_SURFACE_VERSION = 8;
 
-export function controllerToolSurfaceFingerprint(): string {
+export function controllerToolSurfaceFingerprint(toolNames: string[] = []): string {
+  const normalizedNames = [...new Set(toolNames.map((name) => name.trim()).filter(Boolean))].sort();
   return createHash('sha256')
-    .update(`${CONTROLLER_TOOL_SURFACE}:${CONTROLLER_SCHEMA_VERSION}:${CONTROLLER_TOOL_SURFACE_VERSION}`)
+    .update(JSON.stringify({
+      toolSurface: CONTROLLER_TOOL_SURFACE,
+      schemaVersion: CONTROLLER_SCHEMA_VERSION,
+      toolSurfaceVersion: CONTROLLER_TOOL_SURFACE_VERSION,
+      toolNames: normalizedNames,
+    }))
     .digest('hex')
     .slice(0, 16);
 }

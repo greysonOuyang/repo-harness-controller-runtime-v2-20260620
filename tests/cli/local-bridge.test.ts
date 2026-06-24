@@ -470,7 +470,7 @@ printf '%s\n' '{"type":"turn.completed"}'
     expect(dashboard).toContain("Direct Edit");
   });
 
-  test("serves a token-protected localhost visual control surface", async () => {
+  test("serves a hardened localhost visual control surface", async () => {
     const root = repo();
     const handle = await startLocalBridgeServer({
       repoRoot: root,
@@ -478,12 +478,31 @@ printf '%s\n' '{"type":"turn.completed"}'
       openBrowser: false,
     });
     servers.push(handle);
+
     const health = await fetch(new URL("/health", handle.url)).then(
       (response) => response.json(),
     );
     expect(health.status).toBe("ok");
+    expect(health.localOnly).toBe(true);
+    expect(health.repoRoot).toBeUndefined();
+    expect(health.timeoutPolicy).toBeUndefined();
+    expect(health.features).toBeUndefined();
+
     const denied = await fetch(new URL("/api/snapshot", handle.url));
     expect(denied.status).toBe(403);
+    const deniedQueryToken = await fetch(
+      new URL(`/api/snapshot?token=${encodeURIComponent(handle.token)}`, handle.url),
+    );
+    expect(deniedQueryToken.status).toBe(403);
+
+    const rejectedOrigin = await fetch(new URL("/api/snapshot", handle.url), {
+      headers: {
+        origin: "https://malicious.example",
+        "x-repo-harness-local-token": handle.token,
+      },
+    });
+    expect(rejectedOrigin.status).toBe(403);
+
     const snapshot = await fetch(new URL("/api/snapshot", handle.url), {
       headers: { "x-repo-harness-local-token": handle.token },
     }).then((response) => response.json());
@@ -494,11 +513,27 @@ printf '%s\n' '{"type":"turn.completed"}'
       defaultTimeoutMs: 3_600_000,
       maxTimeoutMs: 43_200_000,
     });
+
     const dashboardResponse = await fetch(handle.url);
     expect(dashboardResponse.headers.get("cache-control")).toBe("no-store, max-age=0");
     expect(dashboardResponse.headers.get("pragma")).toBe("no-cache");
     expect(dashboardResponse.headers.get("expires")).toBe("0");
+    expect(dashboardResponse.headers.get("referrer-policy")).toBe("no-referrer");
+    const setCookie = dashboardResponse.headers.get("set-cookie");
+    expect(setCookie).toContain("Path=/api");
+    expect(setCookie).toContain("HttpOnly");
+    expect(setCookie).toContain("SameSite=Strict");
+    const cookie = setCookie?.split(";", 1)[0];
+    expect(cookie).toBeTruthy();
+
+    const cookieSnapshot = await fetch(new URL("/api/snapshot", handle.url), {
+      headers: { cookie: cookie as string },
+    }).then((response) => response.json());
+    expect(cookieSnapshot.repoRoot).toBe(root);
+
     const dashboard = await dashboardResponse.text();
+    expect(dashboard).not.toContain(handle.token);
+    expect(dashboard).not.toContain("?token=");
     expect(dashboard).toContain("repo-harness V8");
     expect(dashboard).toContain("ChatGPT execution bridge");
     expect(dashboard).toContain("执行安全状态修复");

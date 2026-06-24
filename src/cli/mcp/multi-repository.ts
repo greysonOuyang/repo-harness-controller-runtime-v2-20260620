@@ -81,7 +81,7 @@ function parseAgentList(value: unknown): McpAgentRunnerName[] {
     .filter((entry): entry is McpAgentRunnerName => entry === 'codex' || entry === 'claude')));
 }
 
-function runtimePolicy(repoRoot: string, opts: McpServerOptions) {
+export function runtimePolicy(repoRoot: string, opts: McpServerOptions) {
   const profile = parseMcpProfile(opts.profile ?? 'controller');
   const config = loadMcpLocalConfig(repoRoot);
   const envDevRunner = parseBooleanSetting(process.env.REPO_HARNESS_MCP_DEV_RUNNER);
