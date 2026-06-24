@@ -43,7 +43,7 @@ export function createRepoHarnessMcpServer(opts: McpServerOptions): Server {
     const name = request.params.name;
     const args = (request.params.arguments ?? {}) as Record<string, unknown>;
     if (isMultiRepositoryContext(ctx)) {
-      const repositoryResult = callRepositoryTool(ctx.controllerHome, name, args);
+      const repositoryResult = await callRepositoryTool(ctx.controllerHome, name, args);
       if (repositoryResult) return repositoryResult;
       return callMultiRepositoryTool(ctx, name, args);
     }

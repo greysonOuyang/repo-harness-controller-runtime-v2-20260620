@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { dirname } from 'path';
 import { repositoryScopedToolArgs } from '../../src/cli/mcp/multi-repository';
 import {
   acquireControllerLock,
+  controllerLockPath,
+  readControllerLock,
   releaseControllerLock,
 } from '../../src/cli/repositories/locks';
 import { repositoryFixture } from './repository-v81-fixture';
@@ -21,6 +25,29 @@ describe('v8.1 repository lock and remote routing', () => {
     } finally {
       if (lockB) releaseControllerLock(fixture.controllerHome, keyB, lockB.lockId);
       releaseControllerLock(fixture.controllerHome, keyA, lockA.lockId);
+      fixture.cleanup();
+    }
+  });
+
+  test('reaps a repository lock whose owner pid is no longer alive', () => {
+    const fixture = repositoryFixture();
+    const key = { scope: 'repository' as const, repoId: fixture.repoA.repoId };
+    try {
+      const path = controllerLockPath(fixture.controllerHome, key);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, `${JSON.stringify({
+        ...key,
+        lockId: 'repository:stale',
+        owner: 'stale-test',
+        pid: 999_999_999,
+        acquiredAt: '2026-06-24T00:00:00.000Z',
+        path,
+      }, null, 2)}\n`, 'utf-8');
+      expect(readControllerLock(fixture.controllerHome, key)).toBeUndefined();
+      expect(() => readFileSync(path, 'utf-8')).toThrow();
+      const reacquired = acquireControllerLock(fixture.controllerHome, key, 'fresh-owner');
+      releaseControllerLock(fixture.controllerHome, key, reacquired.lockId);
+    } finally {
       fixture.cleanup();
     }
   });

@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { spawnSync } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { appendFileSync, mkdirSync } from 'fs';
 import { dirname, join } from 'path';
 import { capProcessOutput, redactProcessOutput } from '../../effects/process-runner';
@@ -61,6 +61,14 @@ export interface RepositoryCommandExecution {
   repositoryChanged?: boolean;
 }
 
+interface SpawnCommandResult {
+  ok: boolean;
+  exitCode: number;
+  timedOut: boolean;
+  stdout: string;
+  stderr: string;
+}
+
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_TIMEOUT_MS = 15 * 60_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 128 * 1024;
@@ -86,6 +94,101 @@ function commandEnvironment(): NodeJS.ProcessEnv {
   env.GIT_TERMINAL_PROMPT = '0';
   env.CI = '1';
   return env;
+}
+
+function truncatedOutput(chunks: Buffer[], truncated: boolean, maxOutputBytes: number): string {
+  const text = Buffer.concat(chunks).toString('utf8');
+  const redacted = redactProcessOutput(text);
+  return truncated ? capProcessOutput(redacted, maxOutputBytes) : redacted;
+}
+
+function collectOutput(maxOutputBytes: number): {
+  write(chunk: string | Buffer): void;
+  complete(): string;
+} {
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  let truncated = false;
+  return {
+    write(chunk: string | Buffer) {
+      const buffer = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk;
+      if (buffer.length === 0) return;
+      if (totalBytes >= maxOutputBytes) {
+        truncated = true;
+        return;
+      }
+      const remaining = maxOutputBytes - totalBytes;
+      if (buffer.length <= remaining) {
+        chunks.push(buffer);
+        totalBytes += buffer.length;
+        return;
+      }
+      chunks.push(buffer.subarray(0, remaining));
+      totalBytes += remaining;
+      truncated = true;
+    },
+    complete() {
+      return truncatedOutput(chunks, truncated, maxOutputBytes);
+    },
+  };
+}
+
+async function runShellCommand(
+  command: string,
+  cwd: string,
+  timeoutMs: number,
+  maxOutputBytes: number,
+): Promise<SpawnCommandResult> {
+  const shell = process.platform === 'win32' ? 'cmd.exe' : '/bin/sh';
+  const shellArgs = process.platform === 'win32' ? ['/d', '/s', '/c', command] : ['-c', command];
+  const stdoutCollector = collectOutput(maxOutputBytes);
+  const stderrCollector = collectOutput(maxOutputBytes);
+
+  return await new Promise<SpawnCommandResult>((resolve) => {
+    const child = spawn(shell, shellArgs, {
+      cwd,
+      env: commandEnvironment(),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let settled = false;
+    let timedOut = false;
+    let spawnError = '';
+    let timeoutHandle: NodeJS.Timeout | undefined;
+
+    const finish = (exitCode: number) => {
+      if (settled) return;
+      settled = true;
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      const stderrParts = [stderrCollector.complete()];
+      if (timedOut) stderrParts.push(`process timed out after ${timeoutMs}ms: ${redactProcessOutput(command)}`);
+      if (spawnError) stderrParts.push(redactProcessOutput(spawnError));
+      resolve({
+        ok: exitCode === 0 && !timedOut && !spawnError,
+        exitCode,
+        timedOut,
+        stdout: stdoutCollector.complete(),
+        stderr: capProcessOutput(stderrParts.filter(Boolean).join('\n'), maxOutputBytes),
+      });
+    };
+
+    timeoutHandle = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+      setTimeout(() => {
+        if (!settled) child.kill('SIGKILL');
+      }, 1_000).unref();
+    }, timeoutMs);
+    timeoutHandle.unref();
+
+    child.stdout?.on('data', (chunk) => stdoutCollector.write(chunk));
+    child.stderr?.on('data', (chunk) => stderrCollector.write(chunk));
+    child.on('error', (error) => {
+      spawnError = error.message;
+    });
+    child.on('close', (code) => {
+      finish(code ?? 1);
+    });
+  });
 }
 
 function commandOutput(command: string, args: string[], cwd: string, maxOutputBytes: number): {
@@ -232,6 +335,60 @@ export function executeRepositoryCommand(
       typeof result.stderr === 'string' ? result.stderr : '',
       error,
     ].filter(Boolean).join('\n')), maxOutputBytes),
+    after,
+    repositoryChanged: snapshotChanged(before, after),
+  };
+  auditCommand(controllerHome, repository, execution);
+  return execution;
+}
+
+export async function executeRepositoryCommandAsync(
+  controllerHome: string,
+  repository: RepositoryRecord,
+  input: ExecuteRepositoryCommandInput,
+): Promise<RepositoryCommandExecution> {
+  const { root, cwd, relativeCwd } = resolveRepositoryCommandCwd(repository, input.cwd);
+  const command = assertRepositoryCommandAllowed(input.command);
+  assertCommandPathOperandsStayInRepository(command, cwd, root);
+  const classification = classifyRepositoryCommand(command, repository.defaultBranch);
+  const before = repositorySnapshot(root);
+  const token = approvalToken(repository, relativeCwd, command, classification, before);
+  const base: RepositoryCommandExecution = {
+    status: input.dryRun === true ? 'preview' : 'approval_required',
+    repoId: repository.repoId,
+    checkoutId: repository.activeCheckoutId,
+    cwd: relativeCwd,
+    command: redactProcessOutput(command),
+    classification,
+    approvalToken: token,
+    authorization: input.authorization,
+    before,
+  };
+
+  if (input.dryRun === true) {
+    auditCommand(controllerHome, repository, base);
+    return base;
+  }
+
+  const confirmed = input.authorization === 'confirmed_plan' && input.approvalToken === token;
+  const canExecute = classification.risk === 'readonly' || confirmed;
+  if (!canExecute) {
+    auditCommand(controllerHome, repository, base);
+    return base;
+  }
+
+  const timeoutMs = boundedInteger(input.timeoutMs, DEFAULT_TIMEOUT_MS, 1_000, MAX_TIMEOUT_MS);
+  const maxOutputBytes = boundedInteger(input.maxOutputBytes, DEFAULT_MAX_OUTPUT_BYTES, 1_024, MAX_OUTPUT_BYTES);
+  const result = await runShellCommand(command, cwd, timeoutMs, maxOutputBytes);
+  const after = repositorySnapshot(root);
+  const execution: RepositoryCommandExecution = {
+    ...base,
+    status: 'executed',
+    ok: result.ok,
+    exitCode: result.exitCode,
+    timedOut: result.timedOut,
+    stdout: result.stdout,
+    stderr: result.stderr,
     after,
     repositoryChanged: snapshotChanged(before, after),
   };

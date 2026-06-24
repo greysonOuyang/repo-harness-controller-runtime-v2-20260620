@@ -16,12 +16,13 @@ function git(root: string, args: string[]): void {
   }
 }
 
-function json(result: ReturnType<typeof callRepositoryTool>) {
-  return JSON.parse(result?.content[0]?.text ?? "{}");
+async function json(result: ReturnType<typeof callRepositoryTool>) {
+  const resolved = await result;
+  return JSON.parse(resolved?.content[0]?.text ?? "{}");
 }
 
 describe("repository MCP command tools", () => {
-  test("previews and executes repository-scoped git commands through MCP", () => {
+  test("previews and executes repository-scoped git commands through MCP", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "repo-harness-mcp-repo-command-"));
     const controllerHome = join(workspace, "controller-home");
     const repoRoot = join(workspace, "sample-repo");
@@ -42,7 +43,7 @@ describe("repository MCP command tools", () => {
         repo_id: repository.repoId,
         command: "git add tracked.txt",
       });
-      const previewValue = json(preview);
+      const previewValue = await json(preview);
       expect(previewValue.status).toBe("preview");
       expect(previewValue.classification.risk).toBe("workspace_write");
       expect(typeof previewValue.approvalToken).toBe("string");
@@ -52,7 +53,7 @@ describe("repository MCP command tools", () => {
         command: "git add tracked.txt",
         approval_token: previewValue.approvalToken,
       });
-      const executedValue = json(executed);
+      const executedValue = await json(executed);
       expect(executedValue.status).toBe("executed");
       expect(executedValue.ok).toBe(true);
       expect(executedValue.repositoryChanged).toBe(true);
@@ -67,7 +68,7 @@ describe("repository MCP command tools", () => {
     }
   });
 
-  test("requires the exact preview token before execution", () => {
+  test("requires the exact preview token before execution", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "repo-harness-mcp-repo-command-token-"));
     const controllerHome = join(workspace, "controller-home");
     const repoRoot = join(workspace, "sample-repo");
@@ -89,9 +90,44 @@ describe("repository MCP command tools", () => {
         command: "git add tracked.txt",
         approval_token: "wrong-token",
       });
-      const value = json(executed);
+      const value = await json(executed);
       expect(value.status).toBe("approval_required");
       expect(value.after).toBeUndefined();
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test("long-running command execution runs through the async MCP path and captures output", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "repo-harness-mcp-repo-command-async-"));
+    const controllerHome = join(workspace, "controller-home");
+    const repoRoot = join(workspace, "sample-repo");
+    try {
+      mkdirSync(controllerHome, { recursive: true });
+      mkdirSync(repoRoot, { recursive: true });
+      git(repoRoot, ["init", "-b", "main"]);
+      git(repoRoot, ["config", "user.name", "Repo Harness Test"]);
+      git(repoRoot, ["config", "user.email", "repo-harness-test@example.com"]);
+      writeFileSync(join(repoRoot, "README.md"), "hello\n");
+      git(repoRoot, ["add", "README.md"]);
+      git(repoRoot, ["commit", "-m", "init"]);
+
+      const repository = registerRepository({ path: repoRoot, controllerHome });
+      const preview = await json(callRepositoryTool(controllerHome, "repository_command_preview", {
+        repo_id: repository.repoId,
+        command: "python - <<'PY'\nimport time\nprint('start')\ntime.sleep(1)\nprint('ready')\nPY",
+      }));
+      expect(preview.status).toBe("preview");
+      const executionPromise = callRepositoryTool(controllerHome, "repository_command_execute", {
+        repo_id: repository.repoId,
+        command: "python - <<'PY'\nimport time\nprint('start')\ntime.sleep(1)\nprint('ready')\nPY",
+        approval_token: preview.approvalToken,
+      });
+      const executedValue = await json(executionPromise);
+      expect(executedValue.status).toBe("executed");
+      expect(executedValue.ok).toBe(true);
+      expect(executedValue.stdout).toContain("ready");
+      expect(executedValue.stderr ?? "").toBe("");
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }

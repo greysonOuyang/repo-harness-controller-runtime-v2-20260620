@@ -1,6 +1,6 @@
 import { bindRepositoryEntities } from '../repositories/entity-migration';
-import { executeRepositoryCommand } from '../repositories/command-executor';
-import { withControllerLock } from '../repositories/locks';
+import { executeRepositoryCommand, executeRepositoryCommandAsync } from '../repositories/command-executor';
+import { withControllerLock, withControllerLockAsync } from '../repositories/locks';
 import {
   disableRepository,
   getRepository,
@@ -112,11 +112,11 @@ function failure(error: unknown): RepositoryToolResult {
   return { ...result({ error: { code, message } }), isError: true };
 }
 
-export function callRepositoryTool(
+export async function callRepositoryTool(
   controllerHome: string,
   name: string,
   args: Record<string, unknown>,
-): RepositoryToolResult | undefined {
+): Promise<RepositoryToolResult | undefined> {
   if (!name.startsWith('repository_')) return undefined;
   try {
     const repoIdValue = typeof args.repo_id === 'string' ? args.repo_id.trim() : '';
@@ -196,11 +196,11 @@ export function callRepositoryTool(
             ? Number(args.max_output_bytes)
             : undefined;
         const waitMs = Math.min(Math.max(Math.trunc(timeoutMs ?? 120_000) + 30_000, 60_000), 960_000);
-        const execution = withControllerLock(
+        const execution = await withControllerLockAsync(
           controllerHome,
           { scope: 'repository', repoId: repository.repoId },
           'mcp:repository_command_execute',
-          () => executeRepositoryCommand(controllerHome, repository, {
+          () => executeRepositoryCommandAsync(controllerHome, repository, {
             command: String(args.command ?? ''),
             cwd: typeof args.cwd === 'string' ? args.cwd : undefined,
             authorization: 'confirmed_plan',

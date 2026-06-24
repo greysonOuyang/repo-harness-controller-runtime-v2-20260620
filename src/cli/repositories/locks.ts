@@ -45,11 +45,22 @@ function isExpired(record: ControllerLockRecord): boolean {
   return Boolean(record.expiresAt && Date.parse(record.expiresAt) <= Date.now());
 }
 
+function isPidAlive(pid: number | undefined): boolean {
+  if (!pid || pid <= 0) return false;
+  if (pid === process.pid) return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
 export function readControllerLock(controllerHome: string, key: ControllerLockKey): ControllerLockRecord | undefined {
   const path = controllerLockPath(controllerHome, key);
   try {
     const record = JSON.parse(readFileSync(path, 'utf-8')) as ControllerLockRecord;
-    if (isExpired(record)) {
+    if (isExpired(record) || !isPidAlive(record.pid)) {
       rmSync(path, { force: true });
       return undefined;
     }
