@@ -403,37 +403,19 @@ Required test scenarios include:
 
 ## 23. Current Implementation
 
-Current code already has:
+Gateway, Controller Daemon and Worker are separate process roles. Accepted Jobs are persisted before Worker spawn. Job heartbeat, deadline, attempt, PID, Lease and fencing state are durable. Active and request indexes reconstruct scheduling after restart.
 
-- persistent Job and Run records;
-- PID, heartbeat, deadlines, and startup deadlines;
-- atomic Local Job writes;
-- active Local Job index and rebuild;
-- process-group signaling for some checks and Agent paths;
-- orphan/stale/timed-out compatibility states;
-- repository runtime storage validation;
-- request IDs for parts of dispatch;
-- idempotent reconciliation logic in several lifecycle paths.
+Before an operation runs, the Worker writes an Operation Receipt. A completed receipt lets Reconciliation close a Job after a crash between side-effect completion and terminal-state persistence. A started-but-incomplete mutating receipt is treated as an uncertain side effect and becomes `human_attention_required`; it is not replayed. Safe read-only work may be requeued within attempt budget.
 
-## 24. Migration Gaps
+Worker ownership is the tuple of Job ID, attempt, Worker PID and original Lease/fencing set. A stale Worker cannot heartbeat, renew or release replacement Leases, or publish a terminal result for a newer attempt.
 
-- Gateway, Controller Daemon, and Worker are not fully separate;
-- some MCP handlers still await long execution;
-- not every Job type is persisted before execution;
-- fencing tokens are not complete across long resources;
-- active indexes and request-id indexes are inconsistent across entity types;
-- process-tree terminal evidence is not uniform;
-- recovery events lack one shared schema;
-- startup reconciliation is spread across read paths rather than one explicit phase.
+The Gateway does not infer execution failure from a disconnected request. Callers recover with the request ID or Job ID. Cancellation terminates the owned Worker, records a terminal state and releases only that attempt's Claims.
 
-## 25. Migration Rule
+## 24. Recovery Invariants
 
-Until full process separation:
-
-- no new long operation may depend on MCP request lifetime;
-- touched command/check handlers should migrate to durable Jobs;
-- repository-scoped locks must not cover Worker lifetime;
-- active status reads must stay bounded;
-- retries use stable request IDs;
-- uncertain side-effecting operations require reconciliation before retry;
-- 502 or network error must not be interpreted as Job failure without durable evidence.
+- a restarted Gateway never owns Worker lifetime;
+- a restarted Daemon schedules from active indexes;
+- a stale Worker cannot write through an expired or replaced fencing token;
+- external effects are reconciled rather than blindly retried;
+- repository A recovery does not require locking repository B;
+- bounded projections remain readable while Workers execute.

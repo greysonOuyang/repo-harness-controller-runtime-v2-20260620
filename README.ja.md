@@ -4,6 +4,8 @@
   <img src="docs/images/repo-harness-gptpro.png" alt="repo-harness architecture and ChatGPT Pro local planner workflow diagram" width="960">
 </p>
 
+> **現在のアーキテクチャ:** Controller Runtime の正本は [`docs/architecture/current/`](docs/architecture/current/README.md)、実装済み範囲と互換境界は [`implementation-status.md`](docs/architecture/current/implementation-status.md)、性能低下や 502 の診断は [運用ガイド](docs/operations/controller-performance-and-502.md) を参照してください。
+
 `repo-harness` は、Claude/Codex のコーディング session を、繰り返し使える
 repo-local workflow に変えます。CLI と skill/runtime hooks によって、context、plan、
 handoff、check、review evidence をプロジェクト内のファイルへ書き戻し、次の agent session が

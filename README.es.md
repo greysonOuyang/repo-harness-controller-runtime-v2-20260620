@@ -4,6 +4,8 @@
   <img src="docs/images/repo-harness-gptpro.png" alt="repo-harness architecture and ChatGPT Pro local planner workflow diagram" width="960">
 </p>
 
+> **Arquitectura actual:** consulte [`docs/architecture/current/`](docs/architecture/current/README.md) para la fuente de verdad del Controller Runtime, [`implementation-status.md`](docs/architecture/current/implementation-status.md) para consultar la cobertura implementada y los límites de compatibilidad y la [guía de rendimiento/errores 502](docs/operations/controller-performance-and-502.md) para diagnóstico.
+
 `repo-harness` convierte las sesiones de programación con Claude/Codex en un
 workflow repo-local repetible. Incluye un CLI y hooks de skill/runtime que
 escriben contexto, planes, handoffs, checks y evidencias de review dentro del

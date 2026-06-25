@@ -94,21 +94,23 @@ export type InitializerQuestionPack = InitializerQuestionPackV2 | InitializerQue
 
 const PACK_PATH = join(import.meta.dir, "..", "assets", "initializer-question-pack.v4.json");
 
+export function loadQuestionPack(): InitializerQuestionPackV4;
+export function loadQuestionPack(path: string): InitializerQuestionPack;
 export function loadQuestionPack(path: string = PACK_PATH): InitializerQuestionPack {
   if (!existsSync(path)) {
     throw new Error(`initializer-question-pack not found: ${path}`);
   }
 
-  const parsed = JSON.parse(readFileSync(path, "utf-8")) as InitializerQuestionPack;
+  const parsed = JSON.parse(readFileSync(path, "utf-8")) as { version?: unknown };
   if (
     parsed.version !== "initializer-question-pack.v2" &&
     parsed.version !== "initializer-question-pack.v3" &&
     parsed.version !== "initializer-question-pack.v4"
   ) {
-    throw new Error(`Unsupported question pack version: ${parsed.version}`);
+    throw new Error(`Unsupported question pack version: ${String(parsed.version ?? "missing")}`);
   }
 
-  return parsed;
+  return parsed as InitializerQuestionPack;
 }
 
 export function inferPreferredPackageManager(

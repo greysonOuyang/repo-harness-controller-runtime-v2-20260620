@@ -321,11 +321,12 @@ export async function startBrowserBindServer(repoRoot: string, opts: BrowserBind
   if (!profileDir) {
     throw new Error('browser-bind requires a saved binding or --profile-dir');
   }
+  const resolvedProfileDir = profileDir;
   const profileDirectory = opts.profileDirectory ?? binding?.profileDirectory;
   const browserChannel = opts.browserChannel ?? binding?.browserChannel ?? 'chrome';
   const chatgptUrl = opts.chatgptUrl ?? binding?.chatgptUrl ?? 'https://chatgpt.com/';
-  const selectedProfilePath = profileDirectory ? join(profileDir, profileDirectory) : profileDir;
-  const blockedByDefaultProfile = nativeDebuggingBlockedByDefaultProfile(profileDir, browserChannel);
+  const selectedProfilePath = profileDirectory ? join(resolvedProfileDir, profileDirectory) : resolvedProfileDir;
+  const blockedByDefaultProfile = nativeDebuggingBlockedByDefaultProfile(resolvedProfileDir, browserChannel);
   const host = opts.host ?? '127.0.0.1';
   const port = opts.port ?? CHATGPT_BRIDGE_DEFAULT_PORT;
   const bridgeUrl = `http://${host}:${port}`;
@@ -341,7 +342,7 @@ export async function startBrowserBindServer(repoRoot: string, opts: BrowserBind
     return {
       ok: true,
       status: heartbeatFresh() && heartbeat?.composerVisible === true ? 'ready' : 'pending',
-      install: inspectBridgeExtensionInstall(profileDir, profileDirectory, extension.extensionDir),
+      install: inspectBridgeExtensionInstall(resolvedProfileDir, profileDirectory, extension.extensionDir),
       heartbeatFresh: heartbeatFresh(),
       heartbeat,
       extensionDir: extension.extensionDir,
@@ -358,7 +359,7 @@ export async function startBrowserBindServer(repoRoot: string, opts: BrowserBind
       const url = new URL(request.url);
       if (request.method === 'GET' && url.pathname === '/') {
         return new Response(renderBrowserAuthorizePage({
-          profileDir,
+          profileDir: resolvedProfileDir,
           profileDirectory,
           selectedProfilePath,
           browserChannel,
@@ -382,14 +383,14 @@ export async function startBrowserBindServer(repoRoot: string, opts: BrowserBind
         return jsonResponse({ ok: true });
       }
       if (request.method === 'POST' && url.pathname === '/api/open-chatgpt') {
-        openNativeBrowserPage(browserChannel, profileDir, chatgptUrl, profileDirectory);
+        openNativeBrowserPage(browserChannel, resolvedProfileDir, chatgptUrl, profileDirectory);
         return jsonResponse({
           ok: true,
           message: 'Opened ChatGPT. Sign in if needed, keep the tab open, then return here and click Bind ChatGPT.',
         });
       }
       if (request.method === 'POST' && url.pathname === '/api/open-extensions') {
-        openNativeBrowserPage(browserChannel, profileDir, 'chrome://extensions', profileDirectory);
+        openNativeBrowserPage(browserChannel, resolvedProfileDir, 'chrome://extensions', profileDirectory);
         return jsonResponse({
           ok: true,
           message: `Opened Chrome Extensions. Enable Developer mode, click Load unpacked, and select ${extension.extensionDir}.`,
@@ -399,13 +400,13 @@ export async function startBrowserBindServer(repoRoot: string, opts: BrowserBind
         return jsonResponse(bridgeStatus());
       }
       if (request.method === 'POST' && url.pathname === '/api/authorize') {
-        const install = inspectBridgeExtensionInstall(profileDir, profileDirectory, extension.extensionDir);
+        const install = inspectBridgeExtensionInstall(resolvedProfileDir, profileDirectory, extension.extensionDir);
         if (heartbeatFresh() && heartbeat?.composerVisible === true) {
           updateBrowserBindingStatus(repoRoot, 'ready');
           return jsonResponse({
             ok: true,
             status: 'ready',
-            profileDir,
+            profileDir: resolvedProfileDir,
             profileDirectory,
             browserChannel,
             url: heartbeat.url,
@@ -475,7 +476,7 @@ export async function startBrowserBindServer(repoRoot: string, opts: BrowserBind
           });
         }
         const result = await checkNativeChatgptSession({
-          profileDir,
+          profileDir: resolvedProfileDir,
           profileDirectory,
           browserChannel,
           chatgptUrl,
@@ -490,11 +491,11 @@ export async function startBrowserBindServer(repoRoot: string, opts: BrowserBind
 
   const url = `http://${host}:${server.port}/`;
   if (opts.open === true) {
-    openNativeBrowserPage(browserChannel, profileDir, url, profileDirectory);
+    openNativeBrowserPage(browserChannel, resolvedProfileDir, url, profileDirectory);
   }
   return {
     url,
-    profileDir,
+    profileDir: resolvedProfileDir,
     profileDirectory,
     browserChannel,
     extensionDir: extension.extensionDir,

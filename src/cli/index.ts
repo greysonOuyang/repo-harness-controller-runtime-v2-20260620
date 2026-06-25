@@ -7,6 +7,7 @@
  */
 
 import { Command } from 'commander';
+import { pathToFileURL } from 'node:url';
 import { runInstall, runUninstall, type InstallTargetSpec } from './commands/install';
 import { runInit, runInteractiveInit, type InitBrainMode } from './commands/init';
 import { runHook } from './commands/hook';
@@ -23,6 +24,7 @@ import { buildChatgptCommand } from './commands/chatgpt';
 import { buildRunCommand } from './commands/run';
 import { buildControllerCommand } from './commands/controller';
 import { buildRepositoryCommand } from './commands/repository';
+import { buildRuntimeCommand } from './commands/runtime';
 import { formatSecurityScan, runSecurityScan } from './commands/security';
 import { runGlobalRuntimeSetup } from './commands/global-runtime';
 import { runPromptGuardDecideCli } from './commands/prompt-guard-decision';
@@ -55,6 +57,7 @@ export const SUBCOMMANDS = [
   'chatgpt',
   'controller',
   'repo',
+  'runtime',
 ] as const;
 export type Subcommand = (typeof SUBCOMMANDS)[number];
 
@@ -526,6 +529,7 @@ export function buildProgram(): Command {
   program.addCommand(buildRunCommand());
   program.addCommand(buildControllerCommand());
   program.addCommand(buildRepositoryCommand());
+  program.addCommand(buildRuntimeCommand());
   program
     .command('prompt-guard-decide', { hidden: true })
     .description('Internal prompt-guard intent/state decision engine')
@@ -546,7 +550,10 @@ export async function runCli(argv: string[] = process.argv): Promise<void> {
   await buildProgram().parseAsync(argv);
 }
 
-if (import.meta.main) {
+const isDirectExecution = import.meta.main === true
+  || Boolean(process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href);
+
+if (isDirectExecution) {
   try {
     await runCli(process.argv);
   } catch (err) {

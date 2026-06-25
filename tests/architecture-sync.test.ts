@@ -1,10 +1,94 @@
 import { describe, expect, test } from "bun:test";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "fs";
 import { tmpdir } from "os";
-import { join } from "path";
+import { dirname, join } from "path";
 import { spawnSync } from "child_process";
 
 const ROOT = join(import.meta.dir, "..");
+
+const REQUIRED_CURRENT_DOCS = [
+  "README.md",
+  "governance.md",
+  "system-overview.md",
+  "architecture-invariants.md",
+  "entity-model.md",
+  "job-and-run-lifecycle.md",
+  "dispatch-and-agent-strategy.md",
+  "scheduler-and-resource-claims.md",
+  "multi-repository-execution.md",
+  "automation-and-schedule-engine.md",
+  "failure-recovery.md",
+  "verification-and-release-gates.md",
+  "implementation-status.md",
+  "migration-roadmap.md",
+];
+
+const HISTORICAL_RUNTIME_DOCS = [
+  "repo-harness-chatgpt-controller.md",
+  "repo-harness-local-execution-bridge.md",
+  "repo-harness-execution-closure-v5.md",
+  "repo-harness-direct-change-v6.md",
+  "repo-harness-execution-first-v7.md",
+  "repo-harness-chatgpt-bridge-v8.md",
+  "repo-harness-v8-verification.md",
+];
+
+function installRuntimeArchitectureBaseline(cwd: string): void {
+  const currentRoot = join(cwd, "docs/architecture/current");
+  mkdirSync(currentRoot, { recursive: true });
+  for (const file of REQUIRED_CURRENT_DOCS) {
+    let content = `# ${file}\n\n> Status: **Runtime Authority**\n`;
+    if (file === "architecture-invariants.md") {
+      content += [
+        "",
+        "## Invariant 2 — Persist Before Execute",
+        "## Invariant 4 — Task Is Intent; Run Is Attempt",
+        "## Invariant 16 — Evidence Binds to Exact Revision",
+        "## Invariant 21 — Scheduled Work Is Bounded",
+        "",
+      ].join("\n");
+    }
+    if (file === "implementation-status.md") {
+      content += "\n## Implementation Gap\n";
+    }
+    if (file === "migration-roadmap.md") {
+      content += "\n## P0\n\n## P1\n\n## P2\n\n## P3\n\n## P4\n\n## P5\n";
+    }
+    writeFileSync(join(currentRoot, file), content);
+  }
+  writeFileSync(
+    join(cwd, "docs/architecture/index.md"),
+    [
+      "# Architecture Index",
+      "",
+      "## Runtime Authority",
+      "",
+      "docs/architecture/current/ is the Controller Runtime authority.",
+      "",
+      "## Pending Architecture Requests",
+      "",
+      "<!-- BEGIN ARCHITECTURE PENDING REQUESTS -->",
+      "- (none)",
+      "<!-- END ARCHITECTURE PENDING REQUESTS -->",
+      "",
+    ].join("\n"),
+  );
+  for (const file of HISTORICAL_RUNTIME_DOCS) {
+    const path = join(cwd, "docs", file);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(
+      path,
+      [
+        `# ${file}`,
+        "",
+        "> **Historical Design — Not Runtime Authority**",
+        ">",
+        "> Current architecture: [docs/architecture/current/README.md](architecture/current/README.md).",
+        "",
+      ].join("\n"),
+    );
+  }
+}
 
 function run(cmd: string, args: string[], cwd: string) {
   return spawnSync(cmd, args, { cwd, encoding: "utf-8" });
@@ -181,6 +265,48 @@ describe("architecture sync gate", () => {
       const strict = run("bash", ["scripts/check-architecture-sync.sh", "--changed-files", "changed.txt"], cwd);
       expect(strict.status).toBe(1);
       expect(strict.stderr).toContain("strict gate failed");
+    });
+  });
+
+  test("current Controller Runtime architecture baseline passes when complete", () => {
+    tmpRepo((cwd) => {
+      installRuntimeArchitectureBaseline(cwd);
+      writePolicy(cwd, "off");
+      const res = run("bash", ["scripts/check-architecture-sync.sh", "--mode", "off"], cwd);
+      expect(res.status).toBe(0);
+      expect(res.stderr).not.toContain("architecture baseline failed");
+    });
+  });
+
+  test("missing required current architecture document fails in every mode", () => {
+    tmpRepo((cwd) => {
+      installRuntimeArchitectureBaseline(cwd);
+      rmSync(join(cwd, "docs/architecture/current/entity-model.md"));
+      const res = run("bash", ["scripts/check-architecture-sync.sh", "--mode", "off"], cwd);
+      expect(res.status).toBe(1);
+      expect(res.stderr).toContain("missing required file docs/architecture/current/entity-model.md");
+    });
+  });
+
+  test("missing Runtime Authority declaration fails before freshness evaluation", () => {
+    tmpRepo((cwd) => {
+      installRuntimeArchitectureBaseline(cwd);
+      const path = join(cwd, "docs/architecture/index.md");
+      writeFileSync(path, readFileSync(path, "utf-8").replaceAll("Runtime Authority", "Current Architecture"));
+      const res = run("bash", ["scripts/check-architecture-sync.sh", "--mode", "off"], cwd);
+      expect(res.status).toBe(1);
+      expect(res.stderr).toContain("docs/architecture/index.md must contain: Runtime Authority");
+    });
+  });
+
+  test("historical runtime document without authority marker fails", () => {
+    tmpRepo((cwd) => {
+      installRuntimeArchitectureBaseline(cwd);
+      const path = join(cwd, "docs/repo-harness-chatgpt-bridge-v8.md");
+      writeFileSync(path, readFileSync(path, "utf-8").replace("Historical Design", "Version Notes"));
+      const res = run("bash", ["scripts/check-architecture-sync.sh", "--mode", "off"], cwd);
+      expect(res.status).toBe(1);
+      expect(res.stderr).toContain("Historical Design");
     });
   });
 });

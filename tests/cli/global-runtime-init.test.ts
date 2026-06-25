@@ -279,7 +279,7 @@ describe('init command global runtime bootstrap', () => {
         env: { ...process.env, HOME: home },
       });
 
-      expect([0, 1]).toContain(res.status);
+      expect([0, 1]).toContain(res.status ?? -1);
       const report = JSON.parse(res.stdout);
       expect(report.version).toBe(1);
       expect(report.target).toBe('codex');

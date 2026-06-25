@@ -32,7 +32,7 @@ The architecture is both technical and operational. It defines not only modules 
 
 The documents in this directory are the sole architecture authority for the current Controller Runtime.
 
-They do **not** claim that every target capability is already implemented. Every normative document must label material statements using one of these states:
+The target topology is implemented. Normative documents may still distinguish current behavior, extension requirements and compatibility rules using these labels:
 
 ### Current Implementation
 
@@ -40,17 +40,13 @@ Verified behavior that exists in code, tests, persisted schemas, or observable r
 
 Use this label only when a repository path or executable check can support the claim.
 
-### Target Architecture
+### Architecture Requirement
 
-Approved behavior that future implementation must converge toward.
+A non-negotiable behavior that current and future implementations must preserve. Runtime evidence is listed in `implementation-status.md`.
 
-A Target Architecture statement is a requirement, not proof of completion.
+### Compatibility Rule
 
-### Migration Rule
-
-A rule that protects correctness, compatibility, or recoverability while Current Implementation differs from Target Architecture.
-
-Migration Rules remain binding until the implementation reaches the target or an ADR supersedes them.
+A rule that protects existing tools, stored state and callers while the runtime uses the new control-plane implementation.
 
 ## Reading Order
 
@@ -66,10 +62,12 @@ Read the architecture in this order:
 8. `automation-and-schedule-engine.md` — schedules, bounded occurrences, deduplication, budgets, and stop conditions.
 9. `failure-recovery.md` — Gateway, Controller, Worker, orphan, stale, timeout, and reconciliation behavior.
 10. `verification-and-release-gates.md` — exact-revision verification, acceptance, release freeze, and human authorization.
-11. `migration-roadmap.md` — implementation order and evidence gates.
-12. `governance.md` — ownership, ADR, drift, and maintenance rules.
+11. `implementation-status.md` — verified implementation coverage and compatibility boundaries.
+12. `migration-roadmap.md` — completed phase record and maintenance gates.
+13. `runtime-directory-map.md` — executable module boundaries.
+14. `operations-runbook.md` — health, recovery and release operations.
+15. `governance.md` — ownership, ADR, drift, and maintenance rules.
 
-Documents are added through `ISS-20260625-BBFD4B`. A missing document is an explicit governance gap; readers must not substitute a historical version document as current authority.
 
 ## Architecture Layers
 
@@ -149,3 +147,7 @@ The architecture baseline is complete only when:
 - future Issues can cite these documents instead of reconstructing strategy from conversation history.
 
 See [Architecture Governance Contract](governance.md).
+
+
+- [Approved target architecture (zh-CN)](approved-target-architecture.zh-CN.md)
+- [Target requirements traceability](target-requirements-traceability.md)

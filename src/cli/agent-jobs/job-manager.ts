@@ -45,6 +45,8 @@ import type {
 const JOB_ROOT = ".ai/harness/jobs";
 const RUN_LAUNCH_LOCK = ".ai/harness/controller/run-launch.lock";
 const RUN_REQUEST_INDEX_ROOT = ".ai/harness/controller/run-requests";
+const RUN_INDEX_ROOT = ".ai/harness/controller/run-indexes";
+const RUN_INDEX_LOCK = ".ai/harness/controller/run-index.lock";
 const RUN_LAUNCH_LOCK_STALE_MS = 30_000;
 const RUN_LAUNCH_LOCK_WAIT_MS = 500;
 const RUN_LAUNCH_LOCK_POLL_MS = 10;
@@ -193,6 +195,113 @@ function requestIndexPath(repoRoot: string, requestId: string): string {
   return join(requestIndexDir(repoRoot), `${digest}.json`);
 }
 
+interface AgentRunIndexEntry {
+  runId: string;
+  issueId: string;
+  taskId: string;
+  status: AgentJobStatus;
+  createdAt: string;
+  updatedAt: string;
+  executionMode: AgentExecutionMode;
+  integratedSessionId?: string;
+}
+
+interface AgentRunIndex {
+  schemaVersion: 1;
+  updatedAt: string;
+  runs: AgentRunIndexEntry[];
+}
+
+function runIndexPath(repoRoot: string, name: 'active' | 'recent' | 'pending-integration'): string {
+  return join(repoRoot, RUN_INDEX_ROOT, `${name}.json`);
+}
+
+function taskRunIndexPath(repoRoot: string, issueId: string, taskId: string): string {
+  const digest = createHash('sha256').update(`${issueId}\0${taskId}`).digest('hex');
+  return join(repoRoot, RUN_INDEX_ROOT, 'tasks', `${digest}.json`);
+}
+
+function withRunIndexLock<T>(repoRoot: string, action: () => T): T {
+  const path = join(repoRoot, RUN_INDEX_LOCK);
+  mkdirSync(dirname(path), { recursive: true });
+  const deadline = Date.now() + 2_000;
+  let descriptor = -1;
+  while (descriptor < 0) {
+    try {
+      descriptor = openSync(path, 'wx', 0o600);
+      writeFileSync(descriptor, `${JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() })}\n`, 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      let stale = false;
+      try {
+        const lock = readJson<{ pid?: number; createdAt?: string }>(path);
+        stale = !lock.pid || !isAlive(lock.pid) || Date.now() - Date.parse(lock.createdAt ?? '') > 30_000;
+      } catch { stale = true; }
+      if (stale) rmSync(path, { force: true });
+      else if (Date.now() >= deadline) throw new Error('agent run index is busy; retry');
+      else Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    }
+  }
+  try { return action(); }
+  finally { closeSync(descriptor); rmSync(path, { force: true }); }
+}
+
+function readRunIndex(repoRoot: string, name: 'active' | 'recent' | 'pending-integration'): AgentRunIndex {
+  const path = runIndexPath(repoRoot, name);
+  if (!existsSync(path)) return { schemaVersion: 1, updatedAt: new Date().toISOString(), runs: [] };
+  try { return readJson<AgentRunIndex>(path); }
+  catch { return { schemaVersion: 1, updatedAt: new Date().toISOString(), runs: [] }; }
+}
+
+function updateRunIndexes(repoRoot: string, meta: AgentJobMeta): void {
+  withRunIndexLock(repoRoot, () => {
+    const entry: AgentRunIndexEntry = {
+      runId: meta.runId,
+      issueId: meta.issueId,
+      taskId: meta.taskId,
+      status: meta.status,
+      createdAt: meta.createdAt,
+      updatedAt: meta.lastHeartbeatAt ?? meta.finishedAt ?? meta.startedAt ?? meta.createdAt,
+      executionMode: meta.executionMode,
+      integratedSessionId: meta.integratedSessionId,
+    };
+    const active = readRunIndex(repoRoot, 'active');
+    active.runs = active.runs.filter((candidate) => candidate.runId !== meta.runId);
+    if (['queued', 'starting', 'running', 'waiting_for_user'].includes(meta.status)) active.runs.push(entry);
+    active.updatedAt = new Date().toISOString();
+    active.runs = active.runs.sort((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(-5000);
+    writeJson(runIndexPath(repoRoot, 'active'), active);
+
+    const recent = readRunIndex(repoRoot, 'recent');
+    recent.runs = recent.runs.filter((candidate) => candidate.runId !== meta.runId);
+    recent.runs.unshift(entry);
+    recent.updatedAt = new Date().toISOString();
+    recent.runs = recent.runs.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 5000);
+    writeJson(runIndexPath(repoRoot, 'recent'), recent);
+
+    const pendingIntegration = readRunIndex(repoRoot, 'pending-integration');
+    pendingIntegration.runs = pendingIntegration.runs.filter((candidate) => candidate.runId !== meta.runId);
+    if (meta.status === 'succeeded' && meta.executionMode === 'worktree' && !meta.integratedSessionId) pendingIntegration.runs.push(entry);
+    pendingIntegration.updatedAt = new Date().toISOString();
+    pendingIntegration.runs = pendingIntegration.runs.sort((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(-5000);
+    writeJson(runIndexPath(repoRoot, 'pending-integration'), pendingIntegration);
+
+    const taskPath = taskRunIndexPath(repoRoot, meta.issueId, meta.taskId);
+    const taskIndex = existsSync(taskPath)
+      ? readJson<{ schemaVersion: 1; issueId: string; taskId: string; runIds: string[]; activeRunId?: string; updatedAt: string }>(taskPath)
+      : { schemaVersion: 1 as const, issueId: meta.issueId, taskId: meta.taskId, runIds: [], updatedAt: new Date().toISOString() };
+    taskIndex.runIds = [meta.runId, ...taskIndex.runIds.filter((runId) => runId !== meta.runId)].slice(0, 500);
+    taskIndex.activeRunId = ['queued', 'starting', 'running', 'waiting_for_user'].includes(meta.status) ? meta.runId : (taskIndex.activeRunId === meta.runId ? undefined : taskIndex.activeRunId);
+    taskIndex.updatedAt = new Date().toISOString();
+    writeJson(taskPath, taskIndex);
+  });
+}
+
+function writeAgentMeta(repoRoot: string, path: string, meta: AgentJobMeta): void {
+  writeJson(path, meta);
+  updateRunIndexes(repoRoot, meta);
+}
+
 export function appendAgentJobEvent(
   repoRoot: string,
   runId: string,
@@ -225,45 +334,34 @@ export function appendAgentJobEvent(
   }
 }
 
+
+function activeRunIndexEntries(repoRoot: string): AgentRunIndexEntry[] {
+  let active = readRunIndex(repoRoot, 'active').runs;
+  if (active.length === 0 && readRunIndex(repoRoot, 'recent').runs.length === 0 && existsSync(join(repoRoot, JOB_ROOT))) {
+    listAgentJobs(repoRoot, 5000);
+    active = readRunIndex(repoRoot, 'active').runs;
+  }
+  return active;
+}
+
 function activeLocalRuns(repoRoot: string, options: { excludeRunId?: string } = {}): AgentJobMeta[] {
-  const root = join(repoRoot, JOB_ROOT);
-  if (!existsSync(root)) return [];
-  return readdirSync(root, { withFileTypes: true })
-    .filter(
-      (entry) =>
-        entry.isDirectory() && existsSync(join(root, entry.name, "meta.json")),
-    )
-    .map((entry) => {
-      try {
-        return readJson<AgentJobMeta>(join(root, entry.name, "meta.json"));
-      } catch (_error) {
-        return undefined;
-      }
-    })
-    .filter((entry): entry is AgentJobMeta => Boolean(entry))
-    .filter(
-      (entry) =>
-        entry.provider === "local" &&
-        ["queued", "starting", "running"].includes(entry.status) &&
-        entry.runId !== options.excludeRunId &&
-        (isAlive(entry.workerPid) || isAlive(entry.launchPid) || ["queued", "starting"].includes(entry.status)),
-    );
+  return activeRunIndexEntries(repoRoot).flatMap((entry) => {
+    try { return [readJson<AgentJobMeta>(metaPath(repoRoot, entry.runId))]; }
+    catch (_error) { return []; }
+  }).filter(
+    (entry) =>
+      entry.provider === "local" &&
+      ["queued", "starting", "running"].includes(entry.status) &&
+      entry.runId !== options.excludeRunId &&
+      (isAlive(entry.workerPid) || isAlive(entry.launchPid) || ["queued", "starting"].includes(entry.status)),
+  );
 }
 
 function activeRuns(repoRoot: string): AgentJobMeta[] {
-  const root = join(repoRoot, JOB_ROOT);
-  if (!existsSync(root)) return [];
-  return readdirSync(root, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && existsSync(join(root, entry.name, "meta.json")))
-    .map((entry) => {
-      try {
-        return readJson<AgentJobMeta>(join(root, entry.name, "meta.json"));
-      } catch (_error) {
-        return undefined;
-      }
-    })
-    .filter((entry): entry is AgentJobMeta => Boolean(entry))
-    .filter((entry) => ["queued", "starting", "running", "waiting_for_user"].includes(entry.status));
+  return activeRunIndexEntries(repoRoot).flatMap((entry) => {
+    try { return [readJson<AgentJobMeta>(metaPath(repoRoot, entry.runId))]; }
+    catch (_error) { return []; }
+  }).filter((entry) => ["queued", "starting", "running", "waiting_for_user"].includes(entry.status));
 }
 
 function assertNoTaskScopeConflict(
@@ -584,7 +682,7 @@ function failAcceptedTaskJob(
   meta.finishedAt = new Date().toISOString();
   meta.lastHeartbeatAt = meta.finishedAt;
   meta.terminationReason = "spawn_error";
-  writeJson(metaPath(repoRoot, runId), meta);
+  writeAgentMeta(repoRoot, metaPath(repoRoot, runId), meta);
   appendAgentJobEvent(repoRoot, runId, {
     type: "run_failed",
     message: meta.error,
@@ -615,9 +713,23 @@ function acceptancePaths(repoRoot: string, runId: string) {
 }
 
 function findActiveTaskRun(repoRoot: string, issueId: string, taskId: string): AgentJobMeta | undefined {
-  return listAgentJobs(repoRoot, 5000)
+  const indexPath = taskRunIndexPath(repoRoot, issueId, taskId);
+  if (existsSync(indexPath)) {
+    try {
+      const index = readJson<{ activeRunId?: string }>(indexPath);
+      if (index.activeRunId) {
+        const active = getAgentJob(repoRoot, index.activeRunId);
+        if (["queued", "starting", "running", "waiting_for_user"].includes(active.status)) return active;
+      }
+    } catch (_error) {
+      // Fall through to compatibility backfill.
+    }
+  }
+  const active = listAgentJobs(repoRoot, 5000)
     .filter((entry) => entry.issueId === issueId && entry.taskId === taskId)
     .find((entry) => ["queued", "starting", "running", "waiting_for_user"].includes(entry.status));
+  if (active) updateRunIndexes(repoRoot, active);
+  return active;
 }
 
 function baseMeta(
@@ -741,7 +853,7 @@ export function acceptTaskJob(opts: StartTaskJobOptions): DispatchTaskAcceptance
       branch: null,
       baseRevision: currentBaseRevision(opts.repoRoot),
     }, provider, executionMode);
-    writeJson(metaPath(opts.repoRoot, runId), meta);
+    writeAgentMeta(opts.repoRoot, metaPath(opts.repoRoot, runId), meta);
     appendAgentJobEvent(opts.repoRoot, runId, {
       type: "run_created",
       message: `${agent} Run accepted in ${executionMode} mode.`,
@@ -801,7 +913,7 @@ export function launchAcceptedTaskJob(
   meta.baseRevision = isolation.baseRevision;
   const prompt = taskPrompt(issue.title, issue.summary, task, repoRoot, isolation.path, provider, executionMode);
   writeFileSync(paths.promptPath, prompt, "utf-8");
-  writeJson(absoluteMetaPath, meta);
+  writeAgentMeta(repoRoot, absoluteMetaPath, meta);
 
   if (provider === "github") {
     try {
@@ -828,7 +940,7 @@ export function launchAcceptedTaskJob(
       };
       writeFileSync(paths.stdoutPath, `${JSON.stringify(session.raw, null, 2)}\n`, "utf-8");
       if (["succeeded", "failed", "cancelled"].includes(meta.status)) meta.finishedAt = new Date().toISOString();
-      writeJson(absoluteMetaPath, meta);
+      writeAgentMeta(repoRoot, absoluteMetaPath, meta);
       appendAgentJobEvent(repoRoot, runId, {
         type:
           meta.status === "succeeded"
@@ -862,7 +974,7 @@ export function launchAcceptedTaskJob(
       meta.finishedAt = new Date().toISOString();
       meta.terminationReason = "spawn_error";
       writeFileSync(paths.stderrPath, meta.error, "utf-8");
-      writeJson(absoluteMetaPath, meta);
+      writeAgentMeta(repoRoot, absoluteMetaPath, meta);
       appendAgentJobEvent(repoRoot, runId, {
         type: "run_failed",
         message: meta.error,
@@ -917,7 +1029,7 @@ export function launchAcceptedTaskJob(
       Date.parse(meta.startedAt) + (meta.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS),
     ).toISOString();
     meta.lastHeartbeatAt = meta.startedAt;
-    writeJson(absoluteMetaPath, meta);
+    writeAgentMeta(repoRoot, absoluteMetaPath, meta);
     appendAgentJobEvent(repoRoot, runId, {
       type: "run_started",
       message: `Local ${meta.agent} worker started in ${executionMode} mode.`,
@@ -935,7 +1047,7 @@ export function launchAcceptedTaskJob(
     meta.error = error instanceof Error ? error.message : String(error);
     meta.finishedAt = new Date().toISOString();
     meta.terminationReason = "spawn_error";
-    writeJson(absoluteMetaPath, meta);
+    writeAgentMeta(repoRoot, absoluteMetaPath, meta);
     appendAgentJobEvent(repoRoot, runId, {
       type: "run_failed",
       message: meta.error,
@@ -1035,7 +1147,7 @@ export function getAgentJob(
         meta.status === "cancelled"
       )
         meta.finishedAt = meta.finishedAt ?? new Date().toISOString();
-      writeJson(path, meta);
+      writeAgentMeta(repoRoot, path, meta);
       if (previous !== meta.status) {
         const eventType =
           meta.status === "succeeded"
@@ -1072,7 +1184,7 @@ export function getAgentJob(
       }
     } catch (error) {
       meta.error = error instanceof Error ? error.message : String(error);
-      writeJson(path, meta);
+      writeAgentMeta(repoRoot, path, meta);
     }
   } else if (meta.provider === "local") {
     const resultAbsolute = join(repoRoot, meta.resultPath);
@@ -1096,7 +1208,7 @@ export function getAgentJob(
       meta.exitCode = result.exitCode;
       meta.error = result.error;
       meta.finishedAt = result.finishedAt;
-      writeJson(path, meta);
+      writeAgentMeta(repoRoot, path, meta);
       if (previous !== meta.status) {
         appendAgentJobEvent(repoRoot, runId, {
           type: result.ok ? "run_succeeded" : "run_failed",
@@ -1116,7 +1228,7 @@ export function getAgentJob(
       meta.status = "unknown";
       meta.error = meta.error ?? "worker did not start before the startup deadline";
       meta.finishedAt = meta.finishedAt ?? new Date().toISOString();
-      writeJson(path, meta);
+      writeAgentMeta(repoRoot, path, meta);
       appendAgentJobEvent(repoRoot, runId, { type: "run_failed", message: meta.error });
       reconcileLatestTerminalRun(repoRoot, meta);
     } else if (meta.status === "running" && !isAlive(meta.workerPid)) {
@@ -1125,7 +1237,7 @@ export function getAgentJob(
         meta.error ??
         "worker process is no longer running and no result file was produced";
       meta.finishedAt = meta.finishedAt ?? new Date().toISOString();
-      writeJson(path, meta);
+      writeAgentMeta(repoRoot, path, meta);
       appendAgentJobEvent(repoRoot, runId, { type: "run_failed", message: meta.error });
       reconcileLatestTerminalRun(repoRoot, meta);
     }
@@ -1164,18 +1276,48 @@ export function getAgentJob(
   };
 }
 
+export function listPendingIntegrationRuns(repoRoot: string, limit = 500): AgentJobMeta[] {
+  const bounded = Math.max(1, Math.min(limit, 5000));
+  return readRunIndex(repoRoot, 'pending-integration').runs.slice(0, bounded).flatMap((entry) => {
+    try {
+      const { stdoutTail: _stdout, stderrTail: _stderr, ...meta } = getAgentJob(repoRoot, entry.runId);
+      if (meta.status === 'succeeded' && meta.executionMode === 'worktree' && !meta.integratedSessionId) return [meta];
+      return [];
+    } catch (_error) { return []; }
+  });
+}
+
 export function listAgentJobs(repoRoot: string, limit = 50): AgentJobMeta[] {
+  const boundedLimit = Math.min(Math.max(limit, 1), 5000);
+  const recentIndex = readRunIndex(repoRoot, 'recent');
+  if (recentIndex.runs.length > 0) {
+    return recentIndex.runs.slice(0, boundedLimit).flatMap((entry) => {
+      try {
+        const { stdoutTail: _stdout, stderrTail: _stderr, ...meta } = getAgentJob(repoRoot, entry.runId);
+        return [meta];
+      } catch (_error) { return []; }
+    });
+  }
+
+  // Backward-compatible one-time scan for repositories created before run indexes.
   const root = join(repoRoot, JOB_ROOT);
   if (!existsSync(root)) return [];
-  return readdirSync(root, { withFileTypes: true })
-    .filter(
-      (entry) =>
-        entry.isDirectory() && existsSync(join(root, entry.name, "meta.json")),
-    )
-    .map((entry) => getAgentJob(repoRoot, entry.name))
+  const createdAtFromRunId = (runId: string): number => {
+    const match = runId.match(/-(\d{13})-[a-f0-9]+$/i);
+    return match ? Number(match[1]) : 0;
+  };
+  const legacy = readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && existsSync(join(root, entry.name, "meta.json")))
+    .sort((a, b) => createdAtFromRunId(b.name) - createdAtFromRunId(a.name))
+    .slice(0, boundedLimit)
+    .flatMap((entry) => {
+      try { return [getAgentJob(repoRoot, entry.name)]; }
+      catch (_error) { return []; }
+    })
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .slice(0, Math.min(Math.max(limit, 1), 5000))
     .map(({ stdoutTail: _stdout, stderrTail: _stderr, ...meta }) => meta);
+  for (const meta of legacy) updateRunIndexes(repoRoot, meta);
+  return legacy;
 }
 
 export function getAgentJobEvents(
@@ -1276,7 +1418,7 @@ export function dispatchAcceptedTaskJob(
       launcher.unref();
       const current = readJson<AgentJobMeta>(metaPath(repoRoot, runId));
       current.launchPid = launcher.pid;
-      writeJson(metaPath(repoRoot, runId), current);
+      writeAgentMeta(repoRoot, metaPath(repoRoot, runId), current);
     });
   } catch (error) {
     failAcceptedTaskJob(repoRoot, runId, error);
@@ -1310,7 +1452,7 @@ export function cancelAgentJob(repoRoot: string, runId: string): AgentJobMeta {
   meta.status = "cancelled";
   meta.terminationReason = "cancelled";
   meta.finishedAt = new Date().toISOString();
-  writeJson(metaPath(repoRoot, runId), meta);
+  writeAgentMeta(repoRoot, metaPath(repoRoot, runId), meta);
   appendAgentJobEvent(repoRoot, runId, {
     type: "run_cancelled",
     message: "Local Run cancelled.",
@@ -1401,7 +1543,7 @@ export function markAgentJobIntegrated(
   const { stdoutTail: _stdout, stderrTail: _stderr, ...meta } = current;
   meta.integratedSessionId = sessionId;
   meta.integratedAt = new Date().toISOString();
-  writeJson(metaPath(repoRoot, runId), meta);
+  writeAgentMeta(repoRoot, metaPath(repoRoot, runId), meta);
   appendAgentJobEvent(repoRoot, runId, {
     type: "run_integrated",
     message: `Integrated through edit session ${sessionId}.`,

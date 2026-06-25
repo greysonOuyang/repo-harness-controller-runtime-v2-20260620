@@ -13,7 +13,11 @@ import {
 import { dirname, join } from "path";
 import { acceptTaskJob, cancelAgentJob, dispatchAcceptedTaskJob, getAgentJob, startTaskJob } from "../agent-jobs/job-manager";
 import { createIssue, getIssue, removeEphemeralIssue } from "../controller/issue-store";
-import { currentControllerCheckRevision, runControllerCheckAsync } from "../controller/check-runner";
+import {
+  currentControllerCheckRevision,
+  releaseControllerCheckSubscription,
+  runControllerCheckAsync,
+} from "../controller/check-runner";
 import {
   DEFAULT_AGENT_TIMEOUT_MS,
   MAX_AGENT_TIMEOUT_MS,
@@ -29,6 +33,7 @@ import { resolveRepositorySelection } from "../repositories/registry";
 import type { ControllerAgent, ControllerTask } from "../controller/types";
 import { taskExecutionPolicy } from "../controller/execution-policy";
 import { tryAppendControllerWorklogEvent } from "../controller/worklog";
+import { dispatchLegacyLocalJob } from "../../runtime/execution/jobs/legacy-adapter";
 import type {
   LaunchTaskPayload,
   LocalBridgeApproval,
@@ -60,6 +65,10 @@ function now(): string {
 
 function shortId(): string {
   return randomBytes(4).toString("hex");
+}
+
+function checkSubscriberId(jobId: string): string {
+  return `local-job:${jobId}`;
 }
 
 function jobDir(repoRoot: string, jobId: string): string {
@@ -112,6 +121,7 @@ function activeIndexPath(repoRoot: string): string {
 function isActiveLocalBridgeJob(job: LocalBridgeJob): boolean {
   return ["pending_approval", "approved", "running", "dispatched"].includes(job.status);
 }
+
 
 function writeActiveJobIndex(
   repoRoot: string,
@@ -596,9 +606,13 @@ function markJobTerminal(
 
 function refreshLongRunningJob(repoRoot: string, job: LocalBridgeJob): LocalBridgeJob {
   const payload = job.payload as VerifyEditSessionPayload | RepositoryCommandPayload;
-  const configuredTimeout = resolvedJobTimeout(repoRoot, payload.timeoutMs);
+  const configuredTimeout = resolvedJobTimeout(
+    repoRoot,
+    "timeoutMs" in payload ? payload.timeoutMs : undefined,
+  );
   if (runningJobTimedOut(job, configuredTimeout)) {
-    signalWorker(job.workerPid, "SIGTERM");
+    if (job.action === "verify-edit-session") releaseControllerCheckSubscription(checkSubscriberId(job.jobId));
+    else signalWorker(job.workerPid, "SIGTERM");
     return markJobTerminal(
       repoRoot,
       job,
@@ -645,7 +659,7 @@ function refreshLocalBridgeJob(
         : revisionChanged
           ? `Check ${(job.payload as RunCheckPayload).checkId} became stale after the repository revision changed.`
         : `Check ${(job.payload as RunCheckPayload).checkId} was orphaned when Controller process ${String(job.ownerPid)} exited.`;
-      signalWorker(job.workerPid, "SIGTERM");
+      releaseControllerCheckSubscription(checkSubscriberId(job.jobId));
       appendEvent(repoRoot, job.jobId, {
         type: "job_failed",
         message: job.error,
@@ -707,6 +721,15 @@ export function getLocalBridgeJob(repoRoot: string, jobId: string): LocalBridgeJ
   return refreshLocalBridgeJob(repoRoot, readLocalBridgeJob(repoRoot, jobId));
 }
 
+export function getLocalBridgeJobSnapshot(repoRoot: string, jobId: string): LocalBridgeJob {
+  return readLocalBridgeJob(repoRoot, jobId);
+}
+
+export function listLocalBridgeJobSnapshots(repoRoot: string, limit = 100): LocalBridgeJob[] {
+  const boundedLimit = Math.max(1, Math.min(limit, 500));
+  return readStoredJobs(repoRoot, boundedLimit).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
 export function listLocalBridgeJobs(repoRoot: string, limit = 100): LocalBridgeJob[] {
   const boundedLimit = Math.max(1, Math.min(limit, 500));
   const jobs = readStoredJobs(repoRoot, boundedLimit);
@@ -740,6 +763,19 @@ export function reconcileLocalBridgeJobs(repoRoot: string): {
   }
   return { scanned: jobs.length, active, terminalized };
 }
+export function getLocalBridgeJobEventsSnapshot(
+  repoRoot: string,
+  jobId: string,
+): LocalBridgeJobEvent[] {
+  readLocalBridgeJob(repoRoot, jobId);
+  const path = eventsPath(repoRoot, jobId);
+  if (!existsSync(path)) return [];
+  return readFileSync(path, "utf-8")
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as LocalBridgeJobEvent);
+}
+
 export function getLocalBridgeJobEvents(
   repoRoot: string,
   jobId: string,
@@ -751,6 +787,31 @@ export function getLocalBridgeJobEvents(
     .split(/\r?\n/)
     .filter(Boolean)
     .map((line) => JSON.parse(line) as LocalBridgeJobEvent);
+}
+
+export function readLocalBridgeJobOutputSnapshot(
+  repoRoot: string,
+  jobId: string,
+  input: {
+    stream?: "stdout" | "stderr";
+    maxBytes?: number;
+  } = {},
+): {
+  jobId: string;
+  stream: "stdout" | "stderr";
+  maxBytes: number;
+  truncated: boolean;
+  content: string;
+} {
+  readLocalBridgeJob(repoRoot, jobId);
+  const stream = input.stream === "stderr" ? "stderr" : "stdout";
+  const maxBytes = Math.max(1, Math.min(Math.trunc(input.maxBytes ?? 16 * 1024), 512 * 1024));
+  const path = stream === "stdout" ? stdoutPath(repoRoot, jobId) : stderrPath(repoRoot, jobId);
+  if (!existsSync(path)) return { jobId, stream, maxBytes, truncated: false, content: "" };
+  const bytes = readFileSync(path);
+  const truncated = bytes.byteLength > maxBytes;
+  const content = (truncated ? bytes.subarray(Math.max(0, bytes.byteLength - maxBytes)) : bytes).toString("utf-8");
+  return { jobId, stream, maxBytes, truncated, content };
 }
 
 export function readLocalBridgeJobOutput(
@@ -768,16 +829,7 @@ export function readLocalBridgeJobOutput(
   content: string;
 } {
   getLocalBridgeJob(repoRoot, jobId);
-  const stream = input.stream === "stderr" ? "stderr" : "stdout";
-  const maxBytes = Math.max(1, Math.min(Math.trunc(input.maxBytes ?? 16 * 1024), 512 * 1024));
-  const path = stream === "stdout" ? stdoutPath(repoRoot, jobId) : stderrPath(repoRoot, jobId);
-  if (!existsSync(path)) {
-    return { jobId, stream, maxBytes, truncated: false, content: "" };
-  }
-  const bytes = readFileSync(path);
-  const truncated = bytes.byteLength > maxBytes;
-  const content = (truncated ? bytes.subarray(Math.max(0, bytes.byteLength - maxBytes)) : bytes).toString("utf-8");
-  return { jobId, stream, maxBytes, truncated, content };
+  return readLocalBridgeJobOutputSnapshot(repoRoot, jobId, input);
 }
 
 function saveJob(repoRoot: string, job: LocalBridgeJob): LocalBridgeJob {
@@ -796,7 +848,11 @@ export function cancelLocalBridgeJob(
   if (job.runId) {
     try { cancelAgentJob(repoRoot, job.runId); } catch (_error) { /* remote sessions may require provider UI */ }
   }
-  if (job.workerPid) signalWorker(job.workerPid, "SIGTERM");
+  if (job.action === "run-check" || job.action === "verify-edit-session") {
+    releaseControllerCheckSubscription(checkSubscriberId(job.jobId));
+  } else if (job.workerPid) {
+    signalWorker(job.workerPid, "SIGTERM");
+  }
   job.status = "cancelled";
   job.finishedAt = now();
   cleanupEphemeralJob(repoRoot, job);
@@ -954,7 +1010,7 @@ async function executeRunCheck(
       onSpawn: (pid) => {
         const current = tryReadLocalBridgeJob(repoRoot, jobId);
         if (!current || current.status !== "running") {
-          signalWorker(pid, "SIGTERM");
+          releaseControllerCheckSubscription(checkSubscriberId(jobId));
           return;
         }
         current.workerPid = pid;
@@ -962,6 +1018,7 @@ async function executeRunCheck(
         current.deadlineAt = new Date(Date.now() + timeoutMs + 5_000).toISOString();
         saveJob(repoRoot, current);
       },
+      subscriberId: checkSubscriberId(jobId),
     });
     job = tryReadLocalBridgeJob(repoRoot, jobId);
     if (!job || job.status !== "running") return;
@@ -1018,7 +1075,7 @@ async function executeVerifyEditSession(
       onCheckSpawn: (checkId, pid) => {
         const current = tryReadLocalBridgeJob(repoRoot, jobId);
         if (!current || current.status !== "running") {
-          signalWorker(pid, "SIGTERM");
+          releaseControllerCheckSubscription(checkSubscriberId(jobId));
           return;
         }
         current.workerPid = pid;
@@ -1031,6 +1088,7 @@ async function executeVerifyEditSession(
           data: { checkId, pid },
         });
       },
+      subscriberId: checkSubscriberId(jobId),
     });
     job = tryReadLocalBridgeJob(repoRoot, jobId);
     if (!job || job.status !== "running") return;
@@ -1149,7 +1207,7 @@ async function executeRepositoryCommand(
   }
 }
 
-export function executeLocalBridgeJob(
+export function executeLocalBridgeJobInline(
   repoRoot: string,
   jobId: string,
 ): LocalBridgeJob {
@@ -1158,7 +1216,8 @@ export function executeLocalBridgeJob(
     throw new Error("legacy pending-approval jobs cannot execute in V8; cancel and resubmit the work");
   if (job.approval === "manual-only" && !job.approvedAt)
     throw new Error("legacy manual-only jobs cannot execute in V8; cancel and resubmit with same-request destructive authorization");
-  if (!["approved"].includes(job.status)) return job;
+  const projectedExecutionJobId = job.result && typeof job.result.executionJobId === "string" ? job.result.executionJobId : undefined;
+  if (job.status !== "approved" && !(job.status === "dispatched" && projectedExecutionJobId)) return job;
   job.status = "running";
   job.startedAt = now();
   saveJob(repoRoot, job);
@@ -1191,4 +1250,39 @@ export function executeLocalBridgeJob(
   return ["run-check", "verify-edit-session", "repository-command"].includes(job.action)
     ? readLocalBridgeJob(repoRoot, job.jobId)
     : saveJob(repoRoot, job);
+}
+
+
+/**
+ * Compatibility entry point. Local UI and CLI callers retain Local Job IDs,
+ * while execution ownership moves to the unified durable ExecutionJob plane.
+ * Worker processes bypass this adapter and execute the legacy projection inline.
+ */
+export function dispatchLocalBridgeJob(repoRoot: string, jobId: string): LocalBridgeJob {
+  const job = getLocalBridgeJob(repoRoot, jobId);
+  if (job.status !== "approved") return job;
+  const dispatched = dispatchLegacyLocalJob(repoRoot, job);
+  if (job.action === "run-check") job.revision = currentControllerCheckRevision(repoRoot);
+  job.status = "dispatched";
+  job.result = {
+    ...(job.result ?? {}),
+    executionJobId: dispatched.executionJob.jobId,
+    repoId: dispatched.repository.repoId,
+    daemonStatus: dispatched.daemon.status,
+  };
+  job.updatedAt = now();
+  appendEvent(repoRoot, job.jobId, {
+    type: "job_dispatched",
+    message: `Legacy Local Job projected to durable Execution Job ${dispatched.executionJob.jobId}.`,
+    data: { executionJobId: dispatched.executionJob.jobId, repoId: dispatched.repository.repoId },
+  });
+  return saveJob(repoRoot, job);
+}
+
+
+/** Compatibility API for repository-local callers and focused tests.
+ * Production Gateway and Local UI surfaces use dispatchLocalBridgeJob instead.
+ */
+export function executeLocalBridgeJob(repoRoot: string, jobId: string): LocalBridgeJob {
+  return executeLocalBridgeJobInline(repoRoot, jobId);
 }

@@ -365,51 +365,21 @@ Check results and revision-aware caches prevent unnecessary duplication without 
 
 ## 19. Current Implementation
 
-Current capabilities include:
+Verification evidence is bound to Job, repository and exact Git revision with an environment fingerprint. Revision changes invalidate reusable evidence. Oversized result bodies are stored as Artifacts and only bounded previews are returned through Job status.
 
-- named check discovery and execution;
-- check evidence with Revision/cache keys;
-- Edit Session checks and finalization;
-- Task verification records;
-- risk-adaptive completion;
-- reviewed diff and integrated Revision evidence;
-- high-risk human acceptance;
-- release-related package scripts and verification documents.
+Release readiness is implemented as a durable `release-gate` Job holding an exclusive `release:<repoId>` Lease. The Gate checks Workspace cleanliness, active Execution Jobs, Agent Runs, Local compatibility Jobs, pending Worktree integration, unfinished Edit Sessions, other Leases, active-Issue Tasks, exact-revision verification, repository remote identity, GitHub mapping, Controller Daemon readiness and package metadata.
 
-## 20. Migration Gaps
+A successful Gate returns a release manifest for the exact current revision. Push, merge, publish, deploy and destructive external operations still require a separate explicit user authorization.
 
-- verification evidence does not uniformly include checkout and environment identity;
-- some long verification still shares MCP request lifetime;
-- release freeze is not a first-class persisted state/Lease;
-- release manifest is not unified;
-- package, remote mapping, active Job, Worktree, and architecture gates are not exposed as one readiness decision;
-- release execution is not universally modeled as a durable Job;
-- partial external outcome recovery varies by tool;
-- architecture gate does not yet enforce the new current document set.
+## 20. Required Release Tests
 
-## 21. Migration Rule
+Runtime and release checks cover:
 
-Until the complete release subsystem exists:
-
-- verify against the current candidate Revision immediately before release;
-- confirm no active writer, Run, integration, or dirty Edit Session affects the candidate;
-- preserve unrelated dirty user changes and do not release from an ambiguous Workspace;
-- use existing repository release checks as authoritative where available;
-- do not infer release readiness from Task percentages or Agent reports;
-- require explicit authorization before push, merge, publish, deploy, or destructive actions;
-- record partial outcomes and reconcile before retry.
-
-## 22. Required Release Tests
-
-Architecture and runtime tests should eventually cover:
-
-- verification becomes stale after relevant change;
-- identical exact-revision check shares evidence;
-- subscriber cancellation does not kill shared check;
-- isolated Run cannot be accepted before integration;
-- release freeze blocks new mutation Jobs;
-- active orphan/unknown execution blocks readiness;
-- remote mapping mismatch is visible;
-- release manifest binds exact candidate Revision;
-- client disconnect during release preserves durable outcome;
-- partial multi-step release does not report global success.
+- candidate revision changes invalidate evidence;
+- active writers block release;
+- pending Worktree integration blocks release;
+- dirty Edit Sessions block release;
+- remote and GitHub mapping drift block release;
+- release Lease blocks new writes;
+- a successful Gate does not execute an external side effect;
+- partial external outcomes never become global success.

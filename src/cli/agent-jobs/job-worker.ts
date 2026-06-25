@@ -596,8 +596,8 @@ if (ok && config.autoIntegrate && finalMeta.executionMode === "worktree") {
       readFileSync(config.metaPath, "utf-8"),
     ) as AgentJobMeta;
     const completedAt = new Date().toISOString();
-    failedMeta.status = "succeeded";
-    failedMeta.finishedAt = completedAt;
+    failedMeta.status = "waiting_for_user";
+    delete failedMeta.finishedAt;
     failedMeta.lastHeartbeatAt = completedAt;
     failedMeta.autoIntegrationError =
       integrationError instanceof Error
@@ -611,7 +611,6 @@ if (ok && config.autoIntegrate && finalMeta.executionMode === "worktree") {
       activityCount: (failedMeta.progress?.activityCount ?? 0) + 1,
     };
     persistMeta(failedMeta);
-    event("run_succeeded", "Agent process succeeded; automatic integration requires review.");
     event(
       "run_waiting",
       "Automatic worktree integration failed; the worktree was preserved for review.",

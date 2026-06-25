@@ -1,7 +1,9 @@
 import { readFileSync } from "fs";
-import { join } from "path";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
 
-export const WORKFLOW_CONTRACT_ASSET_PATH = join(import.meta.dir, "..", "..", "..", "assets", "workflow-contract.v1.json");
+const moduleDir = typeof import.meta.dir === "string" ? import.meta.dir : dirname(fileURLToPath(import.meta.url));
+export const WORKFLOW_CONTRACT_ASSET_PATH = join(moduleDir, "..", "..", "..", "assets", "workflow-contract.v1.json");
 
 export function readWorkflowContractAsset(): string {
   return readFileSync(WORKFLOW_CONTRACT_ASSET_PATH, "utf-8");

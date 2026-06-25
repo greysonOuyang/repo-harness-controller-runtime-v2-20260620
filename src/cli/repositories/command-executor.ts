@@ -279,7 +279,7 @@ function snapshotChanged(before: RepositoryCommandSnapshot, after: RepositoryCom
 function prepareRepositoryCommandExecution(
   repository: RepositoryRecord,
   input: ExecuteRepositoryCommandInput,
-): { root: string; cwd: string; command: string; timeoutMs: number; maxOutputBytes: number; execution: RepositoryCommandExecution; executable: boolean } {
+): { root: string; cwd: string; command: string; timeoutMs: number; maxOutputBytes: number; before: RepositoryCommandSnapshot; execution: RepositoryCommandExecution; executable: boolean } {
   const { root, cwd, relativeCwd } = resolveRepositoryCommandCwd(repository, input.cwd);
   const command = assertRepositoryCommandAllowed(input.command);
   assertCommandPathOperandsStayInRepository(command, cwd, root);
@@ -317,6 +317,7 @@ export function previewRepositoryCommandExecution(
 ): PreparedRepositoryCommandExecution {
   const prepared = prepareRepositoryCommandExecution(repository, input);
   return {
+    before: prepared.before,
     executable: prepared.executable,
     execution: prepared.execution,
   };

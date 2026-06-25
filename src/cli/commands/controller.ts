@@ -11,7 +11,8 @@ import { finalizeEditSession, getEditSession, getEditSessionDiff, listEditSessio
 import { loadControllerProjectState, saveControllerProjectState } from '../controller/project-state';
 import { closeIssueWithGitHubPlugin, getGitHubPluginStatus, publishIssueWithGitHubPlugin, refreshIssueWithGitHubPlugin, saveGitHubPluginConfig } from '../github/plugin';
 import { getGitHubStatus } from '../github/github';
-import { executeLocalBridgeJob, loadLocalBridgeConfig, submitLocalBridgeJob } from '../local-bridge/job-store';
+import { dispatchLocalBridgeJob,
+  executeLocalBridgeJob, loadLocalBridgeConfig, submitLocalBridgeJob } from '../local-bridge/job-store';
 import { startLocalBridgeServer } from '../local-bridge/server';
 
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled']);
@@ -308,7 +309,7 @@ export function buildControllerCommand(): Command {
           requestedBy: 'controller-cli',
           payload: { issueId, taskId: task.id, timeoutMs: opts.timeoutMs ? Number(opts.timeoutMs) : undefined },
         });
-        return job.status === 'approved' ? executeLocalBridgeJob(root, job.jobId) : job;
+        return job.status === 'approved' ? dispatchLocalBridgeJob(root, job.jobId) : job;
       });
       output({ readiness, jobs, skipped }, opts.json === true);
     });

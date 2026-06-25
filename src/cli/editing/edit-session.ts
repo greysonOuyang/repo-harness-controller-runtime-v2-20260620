@@ -510,8 +510,11 @@ export function getEditSession(repoRoot: string, sessionId: string): EditSession
 export function listEditSessions(repoRoot: string, limit = 100): EditSessionSummary[] {
   const root = join(repoRoot, SESSION_ROOT);
   if (!existsSync(root)) return [];
+  const boundedLimit = Math.max(1, Math.min(limit, 500));
   return readdirSync(root, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && existsSync(join(root, entry.name, 'session.json')))
+    .sort((a, b) => b.name.localeCompare(a.name))
+    .slice(0, boundedLimit)
     .flatMap((entry) => {
       try {
         return [sessionSummary(getEditSession(repoRoot, entry.name))];
@@ -519,8 +522,7 @@ export function listEditSessions(repoRoot: string, limit = 100): EditSessionSumm
         return [];
       }
     })
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-    .slice(0, Math.max(1, Math.min(limit, 500)));
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 export function getEditSessionDiff(repoRoot: string, sessionId: string): {
@@ -702,6 +704,7 @@ export async function verifyEditSessionAsync(repoRoot: string, sessionId: string
   note?: string;
 } = {}, options: {
   onCheckSpawn?: (checkId: string, pid: number) => void;
+  subscriberId?: string;
 } = {}): Promise<EditSession> {
   const request = resolveVerificationRequest(repoRoot, sessionId, input);
   const results: EditSessionCheckRecord[] = [];
@@ -709,6 +712,7 @@ export async function verifyEditSessionAsync(repoRoot: string, sessionId: string
     try {
       const result = await runControllerCheckAsync(repoRoot, checkId, {
         onSpawn: (pid) => options.onCheckSpawn?.(checkId, pid),
+        subscriberId: options.subscriberId,
       });
       results.push(checkRecord(result));
     } catch (error) {

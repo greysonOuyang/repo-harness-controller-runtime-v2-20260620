@@ -271,7 +271,7 @@
       "id": "T4",
       "title": "落地故障恢复、验证与发布门",
       "objective": "编写 Gateway/Controller/Worker 故障边界、Lease/Fencing、重启恢复、状态索引、分层验证、Release Freeze 和人工授权边界。",
-      "status": "running",
+      "status": "done",
       "dependsOn": [
         "T3"
       ],
@@ -295,18 +295,58 @@
       ],
       "risk": "low",
       "notes": [
-        "开始落地 Gateway/Controller/Worker 故障隔离、重启恢复、Lease/Fencing、状态索引、分层验证、Release Freeze 和人工授权边界。"
+        "开始落地 Gateway/Controller/Worker 故障隔离、重启恢复、Lease/Fencing、状态索引、分层验证、Release Freeze 和人工授权边界。",
+        "Direct Edit EDIT-1782378192536-20003158 已 finalized，故障恢复与发布门规范及架构同步证据齐全，进入任务级验证。",
+        "Verification evidence passed and low_risk_change policy auto-completed the Task."
       ],
       "runIds": [],
       "createdAt": "2026-06-25T08:37:40.704Z",
-      "updatedAt": "2026-06-25T09:02:19.057Z",
-      "repoId": "repo_123b7cf58b6b17b5cbe46a56"
+      "updatedAt": "2026-06-25T09:09:03.308Z",
+      "repoId": "repo_123b7cf58b6b17b5cbe46a56",
+      "verification": {
+        "integratedRevision": "EDIT-1782378192536-20003158",
+        "reviewedDiffHash": "60f2ee58706b49629bdc44864f2bbf97da1431461e31c5646d2ff7bb40ddc0b7",
+        "reviewer": "ChatGPT",
+        "checkResults": [
+          {
+            "checkId": "package:check:architecture-sync",
+            "ok": true,
+            "summary": "Passed with persisted evidence: .ai/harness/checks/controller/latest-package-check-architecture-sync.json"
+          }
+        ],
+        "commandEvidence": [],
+        "acceptanceResults": [
+          {
+            "criterion": "定义 Gateway、Controller Daemon、Worker 的故障隔离目标",
+            "ok": true,
+            "evidence": "failure-recovery.md defines independent failure domains, restart responsibilities, health/readiness and process-tree ownership."
+          },
+          {
+            "criterion": "定义 orphan/stale/timed_out/retry 的恢复语义",
+            "ok": true,
+            "evidence": "failure-recovery.md defines evidence requirements, reconciliation order, retry safety and terminal classification for each state."
+          },
+          {
+            "criterion": "定义验证层级和证据绑定当前 Revision",
+            "ok": true,
+            "evidence": "verification-and-release-gates.md defines six verification layers, exact-revision records, stale invalidation and risk-adaptive acceptance."
+          },
+          {
+            "criterion": "定义 Release Freeze、发布清单与不得自动执行的外部副作用",
+            "ok": true,
+            "evidence": "verification-and-release-gates.md defines exclusive Release Freeze, readiness conditions, durable manifest and explicit authorization for push/merge/publish/deploy/destructive actions."
+          }
+        ],
+        "verifiedAt": "2026-06-25T09:09:03.234Z",
+        "autoCompleted": true,
+        "repoId": "repo_123b7cf58b6b17b5cbe46a56"
+      }
     },
     {
       "id": "T5",
       "title": "降级旧代际文档并统一入口",
       "objective": "为旧 Controller、Local Bridge、V7、V8 及相关代际文档增加统一 Historical Design 标识和当前架构链接，删除相互冲突的权威声明。",
-      "status": "planned",
+      "status": "done",
       "dependsOn": [
         "T4"
       ],
@@ -336,17 +376,59 @@
         "历史内容仍保留用于迁移和审计"
       ],
       "risk": "low",
-      "notes": [],
+      "notes": [
+        "开始为旧 Controller、Local Bridge、V5、V6、V7、V8 与 V8 verification 文档增加统一 Historical Design / Not Runtime Authority 标识和当前架构入口，保留原有历史内容。",
+        "Direct Edit EDIT-1782379275627-3595918f 已 finalized；七份旧代际文档统一标记 Historical Design / Not Runtime Authority，并链接当前架构，现有架构同步检查通过。",
+        "Verification evidence passed and low_risk_change policy auto-completed the Task."
+      ],
       "runIds": [],
       "createdAt": "2026-06-25T08:37:40.704Z",
-      "updatedAt": "2026-06-25T08:37:40.704Z",
-      "repoId": "repo_123b7cf58b6b17b5cbe46a56"
+      "updatedAt": "2026-06-25T09:34:40.974Z",
+      "repoId": "repo_123b7cf58b6b17b5cbe46a56",
+      "verification": {
+        "integratedRevision": "EDIT-1782379275627-3595918f",
+        "reviewedDiffHash": "1163678da58ec6f21a66e7317902b4dfe4524c5de3097aaecd05e716ccf7cbcf",
+        "reviewer": "ChatGPT",
+        "checkResults": [
+          {
+            "checkId": "package:check:architecture-sync",
+            "ok": true,
+            "summary": "Passed with persisted evidence: .ai/harness/checks/controller/latest-package-check-architecture-sync.json"
+          }
+        ],
+        "commandEvidence": [],
+        "acceptanceResults": [
+          {
+            "criterion": "所有代际文档顶部均标记 Historical Design / Not Runtime Authority",
+            "ok": true,
+            "evidence": "Seven listed Controller, Local Bridge, V5, V6, V7, V8 and V8 verification documents contain the uniform historical authority marker directly below the title."
+          },
+          {
+            "criterion": "所有代际文档链接 docs/architecture/current/README.md",
+            "ok": true,
+            "evidence": "Each historical notice links to architecture/current/README.md with visible text docs/architecture/current/README.md."
+          },
+          {
+            "criterion": "当前入口不再让读者在互相冲突文档中判断现状",
+            "ok": true,
+            "evidence": "docs/architecture/index.md declares current/ as the sole Runtime Authority and historical pages now point back to that entry."
+          },
+          {
+            "criterion": "历史内容仍保留用于迁移和审计",
+            "ok": true,
+            "evidence": "The edit inserted only six notice lines per document; no historical body content was rewritten or deleted."
+          }
+        ],
+        "verifiedAt": "2026-06-25T09:34:40.971Z",
+        "autoCompleted": true,
+        "repoId": "repo_123b7cf58b6b17b5cbe46a56"
+      }
     },
     {
       "id": "T6",
       "title": "增加架构文档一致性门禁",
       "objective": "扩展 architecture sync 检查与测试，校验 current 文档集合、Runtime Authority 声明、历史文档标识和关键架构不变量关键词。",
-      "status": "planned",
+      "status": "running",
       "dependsOn": [
         "T5"
       ],
@@ -374,10 +456,12 @@
         "专项测试、architecture sync 和类型检查通过"
       ],
       "risk": "medium",
-      "notes": [],
+      "notes": [
+        "开始扩展 architecture sync 门禁与专项测试，并创建 migration-roadmap.md；门禁将校验 current 文档集合、Runtime Authority、历史标识、当前架构链接和关键不变量。"
+      ],
       "runIds": [],
       "createdAt": "2026-06-25T08:37:40.704Z",
-      "updatedAt": "2026-06-25T08:37:40.704Z",
+      "updatedAt": "2026-06-25T09:36:26.027Z",
       "repoId": "repo_123b7cf58b6b17b5cbe46a56"
     },
     {
@@ -415,9 +499,73 @@
       "createdAt": "2026-06-25T08:37:40.704Z",
       "updatedAt": "2026-06-25T08:37:40.704Z",
       "repoId": "repo_123b7cf58b6b17b5cbe46a56"
+    },
+    {
+      "id": "T8",
+      "title": "合并并删除旧版本架构文档",
+      "objective": "将 V4-V8、旧 Controller、Local Bridge 的设计与验证文档浓缩为一份架构演进历史，删除旧版本文档和文件清单，并更新 README、发布文件列表、MCP 文档白名单及当前架构治理规则。",
+      "status": "blocked",
+      "dependsOn": [
+        "T5"
+      ],
+      "allowedPaths": [
+        "docs/architecture/history.md",
+        "docs/architecture/index.md",
+        "docs/architecture/current/README.md",
+        "docs/architecture/current/governance.md",
+        "docs/architecture/current/architecture-invariants.md",
+        "docs/architecture/current/migration-roadmap.md",
+        "docs/repo-harness-progress-ledger-v4.md",
+        "docs/repo-harness-v4-verification.md",
+        "docs/repo-harness-v4-file-manifest.sha256",
+        "docs/repo-harness-execution-closure-v5.md",
+        "docs/repo-harness-v5-verification.md",
+        "docs/repo-harness-v5-file-manifest.sha256",
+        "docs/repo-harness-direct-change-v6.md",
+        "docs/repo-harness-v6-verification.md",
+        "docs/repo-harness-v6-file-manifest.sha256",
+        "docs/repo-harness-execution-first-v7.md",
+        "docs/repo-harness-chatgpt-bridge-v8.md",
+        "docs/repo-harness-v8-verification.md",
+        "docs/repo-harness-v8-file-manifest.sha256",
+        "docs/repo-harness-chatgpt-controller.md",
+        "docs/repo-harness-local-execution-bridge.md",
+        "README.md",
+        "README.zh-CN.md",
+        "package.json",
+        "src/cli/mcp/tools.ts"
+      ],
+      "forbiddenPaths": [
+        "src/cli/local-bridge/**",
+        "src/cli/agent-jobs/**",
+        "tasks/issues/ISS-20260624-6732EE*",
+        ".ai/**"
+      ],
+      "checks": [
+        "package:check:type"
+      ],
+      "acceptanceCriteria": [
+        "仓库仅保留一份架构版本演进文档 docs/architecture/history.md",
+        "V4-V8、旧 Controller 和 Local Bridge 版本设计、验证记录及文件清单被删除",
+        "README、package files、MCP 文档白名单不再引用已删除文档",
+        "当前架构治理规则明确历史只保留一份摘要，不按版本复制权威文档",
+        "类型检查通过且不覆盖无关运行时代码改动"
+      ],
+      "risk": "medium",
+      "notes": [
+        "Accepted RUN-iss-20260625-bbfd4b-t8-1782381907189-d8265752 for asynchronous launch.",
+        "Dispatched RUN-iss-20260625-bbfd4b-t8-1782381907189-d8265752 to codex.",
+        "RUN-iss-20260625-bbfd4b-t8-1782381907189-d8265752 ended as failed; explicit retry is required. Reading additional input from stdin..."
+      ],
+      "runIds": [
+        "RUN-iss-20260625-bbfd4b-t8-1782381907189-d8265752"
+      ],
+      "createdAt": "2026-06-25T10:04:54.596Z",
+      "updatedAt": "2026-06-25T10:05:14.243Z",
+      "repoId": "repo_123b7cf58b6b17b5cbe46a56"
     }
   ],
   "createdAt": "2026-06-25T08:37:40.704Z",
-  "updatedAt": "2026-06-25T09:02:19.057Z",
+  "updatedAt": "2026-06-25T10:05:14.243Z",
   "repoId": "repo_123b7cf58b6b17b5cbe46a56"
 }

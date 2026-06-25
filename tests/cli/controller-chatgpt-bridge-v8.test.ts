@@ -132,7 +132,7 @@ describe("Controller V8 ChatGPT execution bridge", () => {
     expect(capabilities.capabilities.multiRevisionDirectEdits).toBe(true);
     expect(capabilities.capabilities.hierarchicalControllerUI).toBe(true);
 
-    const dashboard = localBridgeDashboardHtml("test-token");
+    const dashboard = localBridgeDashboardHtml();
     expect(dashboard).toContain("概览");
     expect(dashboard).toContain("工作项");
     expect(dashboard).toContain("活动");

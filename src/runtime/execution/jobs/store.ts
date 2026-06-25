@@ -1,0 +1,404 @@
+import { createHash, randomUUID } from 'crypto';
+import { existsSync, readdirSync } from 'fs';
+import { join } from 'path';
+import { ensureControllerHome, ensureRepositoryControllerLayout, repositoryControllerRoot } from '../../../cli/repositories/controller-home';
+import { withControllerLock } from '../../../cli/repositories/locks';
+import { appendJobEvent } from '../../evidence/event-ledger';
+import { markRepositoryProjectionDirty } from '../../projections/invalidation';
+import { readJsonFile, removeFile, sanitizeFileComponent, writeJsonAtomic } from '../../shared/json-files';
+import { releaseExecutionLeases } from '../../resources/leases/store';
+import {
+  ACTIVE_JOB_STATUSES,
+  TERMINAL_JOB_STATUSES,
+  type CreateExecutionJobInput,
+  type ExecutionJob,
+  type ExecutionJobStatus,
+} from './types';
+
+interface ActiveJobIndex {
+  schemaVersion: 1;
+  updatedAt: string;
+  jobs: Array<{ jobId: string; repoId: string; status: ExecutionJobStatus; priority: string; queuedAt: string; updatedAt: string }>;
+}
+
+interface RecentJobIndex {
+  schemaVersion: 1;
+  updatedAt: string;
+  jobs: Array<{ jobId: string; repoId: string; createdAt: string; updatedAt: string; status: ExecutionJobStatus }>;
+}
+
+interface RequestIndexRecord {
+  schemaVersion: 1;
+  requestId: string;
+  semanticKey: string;
+  jobId: string;
+  repoId: string;
+  createdAt: string;
+}
+
+function now(): string { return new Date().toISOString(); }
+function safeRepoId(repoId: string): string { return sanitizeFileComponent(repoId); }
+
+export function executionJobRoot(controllerHome: string, repoId: string): string {
+  ensureRepositoryControllerLayout(controllerHome, repoId);
+  return join(repositoryControllerRoot(controllerHome, safeRepoId(repoId)), 'execution-jobs');
+}
+
+function jobPath(controllerHome: string, repoId: string, jobId: string): string {
+  return join(executionJobRoot(controllerHome, repoId), 'records', `${sanitizeFileComponent(jobId)}.json`);
+}
+
+function requestPath(controllerHome: string, requestId: string): string {
+  const hash = createHash('sha256').update(requestId).digest('hex');
+  return join(ensureControllerHome(controllerHome), 'indexes', 'execution-jobs', 'requests', `${hash}.json`);
+}
+
+function activeIndexPath(controllerHome: string): string {
+  return join(ensureControllerHome(controllerHome), 'indexes', 'execution-jobs', 'active.json');
+}
+
+function recentIndexPath(controllerHome: string): string {
+  return join(ensureControllerHome(controllerHome), 'indexes', 'execution-jobs', 'recent.json');
+}
+
+function readActiveIndex(controllerHome: string): ActiveJobIndex {
+  return readJsonFile<ActiveJobIndex>(activeIndexPath(controllerHome), {
+    schemaVersion: 1,
+    updatedAt: now(),
+    jobs: [],
+  });
+}
+
+function readRecentIndex(controllerHome: string): RecentJobIndex {
+  return readJsonFile<RecentJobIndex>(recentIndexPath(controllerHome), {
+    schemaVersion: 1,
+    updatedAt: now(),
+    jobs: [],
+  });
+}
+
+function writeActiveIndex(controllerHome: string, index: ActiveJobIndex): void {
+  const deduped = new Map(index.jobs.map((entry) => [entry.jobId, entry]));
+  writeJsonAtomic(activeIndexPath(controllerHome), {
+    schemaVersion: 1,
+    updatedAt: now(),
+    jobs: [...deduped.values()].sort((a, b) => a.queuedAt.localeCompare(b.queuedAt)).slice(-5000),
+  } satisfies ActiveJobIndex);
+}
+
+function writeRecentIndex(controllerHome: string, index: RecentJobIndex): void {
+  const deduped = new Map(index.jobs.map((entry) => [entry.jobId, entry]));
+  writeJsonAtomic(recentIndexPath(controllerHome), {
+    schemaVersion: 1,
+    updatedAt: now(),
+    jobs: [...deduped.values()]
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 5000),
+  } satisfies RecentJobIndex);
+}
+
+function upsertIndexesUnlocked(controllerHome: string, job: ExecutionJob): void {
+  const index = readActiveIndex(controllerHome);
+  index.jobs = index.jobs.filter((entry) => entry.jobId !== job.jobId);
+  if (ACTIVE_JOB_STATUSES.has(job.status)) {
+    index.jobs.push({
+      jobId: job.jobId,
+      repoId: job.repoId,
+      status: job.status,
+      priority: job.priority,
+      queuedAt: job.queuedAt,
+      updatedAt: job.updatedAt,
+    });
+  }
+  writeActiveIndex(controllerHome, index);
+  const recent = readRecentIndex(controllerHome);
+  recent.jobs = recent.jobs.filter((entry) => entry.jobId !== job.jobId);
+  recent.jobs.push({ jobId: job.jobId, repoId: job.repoId, createdAt: job.createdAt, updatedAt: job.updatedAt, status: job.status });
+  writeRecentIndex(controllerHome, recent);
+}
+
+function upsertIndexes(controllerHome: string, job: ExecutionJob): void {
+  withControllerLock(controllerHome, { scope: 'global' }, `execution-index:${job.jobId}`, () => {
+    upsertIndexesUnlocked(controllerHome, job);
+  }, 10_000);
+}
+
+function persistJob(controllerHome: string, job: ExecutionJob): ExecutionJob {
+  writeJsonAtomic(jobPath(controllerHome, job.repoId, job.jobId), job);
+  upsertIndexes(controllerHome, job);
+  markRepositoryProjectionDirty(controllerHome, job.repoId, `job:${job.jobId}:${job.status}`);
+  return job;
+}
+
+export function getExecutionJob(controllerHome: string, repoId: string, jobId: string): ExecutionJob {
+  return readJsonFile<ExecutionJob>(jobPath(controllerHome, repoId, jobId));
+}
+
+export function findExecutionJob(controllerHome: string, jobId: string): ExecutionJob | undefined {
+  const active = readActiveIndex(controllerHome).jobs.find((entry) => entry.jobId === jobId);
+  if (active) {
+    try { return getExecutionJob(controllerHome, active.repoId, jobId); } catch { /* continue */ }
+  }
+  const recent = readRecentIndex(controllerHome).jobs.find((entry) => entry.jobId === jobId);
+  if (recent) {
+    try { return getExecutionJob(controllerHome, recent.repoId, jobId); } catch { /* continue to legacy fallback */ }
+  }
+  const home = ensureControllerHome(controllerHome);
+  const repositoriesRoot = join(home, 'repositories');
+  try {
+    for (const repoId of readdirSync(repositoriesRoot)) {
+      const candidate = jobPath(home, repoId, jobId);
+      if (existsSync(candidate)) return readJsonFile<ExecutionJob>(candidate);
+    }
+  } catch { /* no repositories */ }
+  return undefined;
+}
+
+export function createExecutionJob(controllerHome: string, input: CreateExecutionJobInput): { job: ExecutionJob; deduplicated: boolean } {
+  const home = ensureControllerHome(controllerHome);
+  const normalizedRequestId = input.requestId.trim();
+  if (!normalizedRequestId) throw new Error('REQUEST_ID_REQUIRED: every durable command must have a requestId');
+  const normalizedSemanticKey = input.semanticKey.trim();
+  if (!normalizedSemanticKey) throw new Error('SEMANTIC_KEY_REQUIRED: every durable command must have a semanticKey');
+
+  return withControllerLock(home, { scope: 'global' }, `create-job:${normalizedRequestId}`, () => {
+    const requestRecordPath = requestPath(home, normalizedRequestId);
+    if (existsSync(requestRecordPath)) {
+      const record = readJsonFile<RequestIndexRecord>(requestRecordPath);
+      const existing = getExecutionJob(home, record.repoId, record.jobId);
+      if (record.semanticKey !== normalizedSemanticKey) {
+        throw new Error(`REQUEST_ID_CONFLICT: ${normalizedRequestId} already belongs to ${record.semanticKey}`);
+      }
+      return { job: existing, deduplicated: true };
+    }
+    const createdAt = now();
+    const timeoutMs = Math.max(1_000, Math.min(input.timeoutMs ?? 15 * 60_000, 24 * 60 * 60_000));
+    const job: ExecutionJob = {
+      schemaVersion: 1,
+      revision: 1,
+      jobId: `EJOB-${Date.now()}-${randomUUID().slice(0, 8)}`,
+      repoId: input.repoId,
+      checkoutId: input.checkoutId,
+      type: input.type,
+      status: 'queued',
+      priority: input.priority ?? 'P1',
+      requestId: normalizedRequestId,
+      semanticKey: normalizedSemanticKey,
+      payload: input.payload,
+      origin: input.origin,
+      resourceClaims: input.resourceClaims ?? [],
+      dependencies: input.dependencies ?? [],
+      leaseRefs: [],
+      createdAt,
+      updatedAt: createdAt,
+      queuedAt: createdAt,
+      deadlineAt: new Date(Date.now() + timeoutMs).toISOString(),
+      attempt: 0,
+      maxAttempts: Math.max(1, Math.min(input.maxAttempts ?? 1, 10)),
+      evidenceIds: [],
+    };
+    writeJsonAtomic(jobPath(home, job.repoId, job.jobId), job);
+    writeJsonAtomic(requestRecordPath, {
+      schemaVersion: 1,
+      requestId: normalizedRequestId,
+      semanticKey: normalizedSemanticKey,
+      jobId: job.jobId,
+      repoId: job.repoId,
+      createdAt,
+    } satisfies RequestIndexRecord);
+    upsertIndexesUnlocked(home, job);
+    markRepositoryProjectionDirty(home, job.repoId, `job:${job.jobId}:created`);
+    appendJobEvent(home, job, 'job_created', { type: job.type, priority: job.priority });
+    return { job, deduplicated: false };
+  }, 10_000);
+}
+
+export function updateExecutionJob(
+  controllerHome: string,
+  repoId: string,
+  jobId: string,
+  updater: (current: ExecutionJob) => ExecutionJob,
+  eventType?: string,
+  eventData?: Record<string, unknown>,
+): ExecutionJob {
+  return withControllerLock(controllerHome, { scope: 'task', repoId, taskId: `execution-job-${jobId}` }, `update-job:${jobId}`, () => {
+    const current = getExecutionJob(controllerHome, repoId, jobId);
+    const next = updater(structuredClone(current));
+    if (next.jobId !== current.jobId || next.repoId !== current.repoId) throw new Error('JOB_IDENTITY_IMMUTABLE');
+    next.revision = current.revision + 1;
+    next.updatedAt = now();
+    persistJob(controllerHome, next);
+    if (eventType) appendJobEvent(controllerHome, next, eventType, eventData);
+    return next;
+  }, 10_000);
+}
+
+const WAITING_JOB_STATUSES = new Set<ExecutionJobStatus>([
+  'queued', 'waiting_for_dependency', 'waiting_for_workspace', 'waiting_for_heavy_check',
+  'waiting_for_integration', 'waiting_for_release_barrier',
+]);
+
+function transitionAllowed(from: ExecutionJobStatus, to: ExecutionJobStatus): boolean {
+  if (from === to) return true;
+  if (TERMINAL_JOB_STATUSES.has(from)) return false;
+  if (WAITING_JOB_STATUSES.has(from)) {
+    return WAITING_JOB_STATUSES.has(to)
+      || ['running', 'cancelled', 'timed_out', 'human_attention_required'].includes(to);
+  }
+  if (from === 'running') {
+    return ['queued', 'succeeded', 'failed', 'timed_out', 'cancelled', 'orphaned', 'stale', 'human_attention_required'].includes(to);
+  }
+  if (from === 'dispatched') {
+    return ['running', 'succeeded', 'failed', 'timed_out', 'cancelled', 'orphaned', 'stale', 'human_attention_required'].includes(to);
+  }
+  return false;
+}
+
+export function transitionExecutionJob(
+  controllerHome: string,
+  repoId: string,
+  jobId: string,
+  status: ExecutionJobStatus,
+  patch: Partial<ExecutionJob> = {},
+  eventData?: Record<string, unknown>,
+): ExecutionJob {
+  return updateExecutionJob(controllerHome, repoId, jobId, (current) => {
+    if (!transitionAllowed(current.status, status)) {
+      if (TERMINAL_JOB_STATUSES.has(current.status)) throw new Error(`JOB_ALREADY_TERMINAL: ${jobId} is ${current.status}`);
+      throw new Error(`JOB_TRANSITION_INVALID: ${jobId} cannot move from ${current.status} to ${status}`);
+    }
+    const timestamp = now();
+    const next: ExecutionJob = { ...current, ...patch, status };
+    if (status === 'running' && !next.startedAt) next.startedAt = timestamp;
+    if (TERMINAL_JOB_STATUSES.has(status)) {
+      next.finishedAt = timestamp;
+      next.workerPid = undefined;
+    }
+    return next;
+  }, `job_${status}`, eventData);
+}
+
+function sameLeaseRefs(
+  current: ExecutionJob['leaseRefs'],
+  expected: Array<Pick<ExecutionJob['leaseRefs'][number], 'leaseId' | 'fencingToken'>>,
+): boolean {
+  if (current.length !== expected.length) return false;
+  const tokens = new Map(current.map((ref) => [ref.leaseId, ref.fencingToken]));
+  return expected.every((ref) => tokens.get(ref.leaseId) === ref.fencingToken);
+}
+
+export function heartbeatExecutionJob(
+  controllerHome: string,
+  repoId: string,
+  jobId: string,
+  workerPid: number,
+  expectedAttempt?: number,
+): ExecutionJob {
+  return updateExecutionJob(controllerHome, repoId, jobId, (current) => {
+    if (current.status !== 'running') throw new Error(`WORKER_OWNERSHIP_LOST: ${jobId} is ${current.status}`);
+    if (expectedAttempt !== undefined && current.attempt !== expectedAttempt) {
+      throw new Error(`WORKER_OWNERSHIP_LOST: ${jobId} attempt ${expectedAttempt} was replaced by ${current.attempt}`);
+    }
+    if (current.workerPid !== undefined && current.workerPid !== workerPid) {
+      throw new Error(`WORKER_OWNERSHIP_LOST: ${jobId} belongs to PID ${current.workerPid}`);
+    }
+    return { ...current, heartbeatAt: now(), workerPid };
+  });
+}
+
+export function transitionExecutionJobFromWorker(
+  controllerHome: string,
+  repoId: string,
+  jobId: string,
+  owner: {
+    workerPid: number;
+    attempt: number;
+    leaseRefs: Array<Pick<ExecutionJob['leaseRefs'][number], 'leaseId' | 'fencingToken'>>;
+  },
+  status: Extract<ExecutionJobStatus, 'succeeded' | 'failed' | 'human_attention_required'>,
+  patch: Partial<ExecutionJob> = {},
+  eventData?: Record<string, unknown>,
+): ExecutionJob {
+  return updateExecutionJob(controllerHome, repoId, jobId, (current) => {
+    if (current.status !== 'running'
+      || current.workerPid !== owner.workerPid
+      || current.attempt !== owner.attempt
+      || !sameLeaseRefs(current.leaseRefs, owner.leaseRefs)) {
+      throw new Error(`WORKER_OWNERSHIP_LOST: ${jobId} attempt ${owner.attempt} may not publish a terminal state`);
+    }
+    const timestamp = now();
+    return {
+      ...current,
+      ...patch,
+      status,
+      finishedAt: timestamp,
+      workerPid: undefined,
+    };
+  }, `job_${status}`, eventData);
+}
+
+export function listActiveExecutionJobs(controllerHome: string, repoId?: string): ExecutionJob[] {
+  const index = readActiveIndex(controllerHome);
+  const output: ExecutionJob[] = [];
+  for (const entry of index.jobs) {
+    if (repoId && entry.repoId !== repoId) continue;
+    try {
+      const job = getExecutionJob(controllerHome, entry.repoId, entry.jobId);
+      if (ACTIVE_JOB_STATUSES.has(job.status)) output.push(job);
+    } catch { /* stale index repaired below */ }
+  }
+  return output;
+}
+
+export function listExecutionJobs(controllerHome: string, repoId: string, limit = 100): ExecutionJob[] {
+  const boundedLimit = Math.max(1, Math.min(limit, 1000));
+  const output: ExecutionJob[] = [];
+  for (const entry of readRecentIndex(controllerHome).jobs) {
+    if (entry.repoId !== repoId) continue;
+    try { output.push(getExecutionJob(controllerHome, repoId, entry.jobId)); } catch { /* stale index entry */ }
+    if (output.length >= boundedLimit) break;
+  }
+  if (output.length > 0) return output;
+
+  // Backward-compatible one-time fallback for state created before the recent index existed.
+  const records = join(executionJobRoot(controllerHome, repoId), 'records');
+  try {
+    const legacy = readdirSync(records)
+      .filter((name) => name.endsWith('.json'))
+      .map((name) => readJsonFile<ExecutionJob>(join(records, name)))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, boundedLimit);
+    if (legacy.length > 0) {
+      withControllerLock(controllerHome, { scope: 'global' }, `execution-index-backfill:${repoId}`, () => {
+        for (const job of legacy) upsertIndexesUnlocked(controllerHome, job);
+      }, 10_000);
+    }
+    return legacy;
+  } catch { return []; }
+}
+
+export function cancelExecutionJob(controllerHome: string, repoId: string, jobId: string, reason = 'Cancelled by user'): ExecutionJob {
+  const current = getExecutionJob(controllerHome, repoId, jobId);
+  if (TERMINAL_JOB_STATUSES.has(current.status)) return current;
+  const cancelled = transitionExecutionJob(controllerHome, repoId, jobId, 'cancelled', {
+    error: { code: 'CANCELLED', message: reason, retryable: false },
+    leaseRefs: [],
+  }, { reason });
+  if (current.workerPid && current.workerPid !== process.pid) {
+    try { process.kill(current.workerPid, 'SIGTERM'); } catch { /* worker already exited */ }
+  }
+  releaseExecutionLeases(controllerHome, repoId, jobId, current.leaseRefs);
+  return cancelled;
+}
+
+export function removeExecutionJobFromActiveIndex(controllerHome: string, job: ExecutionJob): void {
+  withControllerLock(controllerHome, { scope: 'global' }, `execution-index-remove:${job.jobId}`, () => {
+    const active = readActiveIndex(controllerHome);
+    active.jobs = active.jobs.filter((entry) => entry.jobId !== job.jobId);
+    writeActiveIndex(controllerHome, active);
+  }, 10_000);
+}
+
+export function removeRequestIndex(controllerHome: string, requestId: string): void {
+  removeFile(requestPath(controllerHome, requestId));
+}

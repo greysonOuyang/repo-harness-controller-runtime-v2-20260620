@@ -12,7 +12,11 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { spawnSync } from "child_process";
 import { getAgentJob } from "../../src/cli/agent-jobs/job-manager";
-import { controllerCheckConcurrencyClass, runControllerCheckAsync } from "../../src/cli/controller/check-runner";
+import {
+  controllerCheckConcurrencyClass,
+  releaseControllerCheckSubscription,
+  runControllerCheckAsync,
+} from "../../src/cli/controller/check-runner";
 import { CONTROLLER_TOOL_SURFACE } from "../../src/cli/controller/runtime-config";
 import { createIssue, updateTask } from "../../src/cli/controller/issue-store";
 import { beginEditSession, applyEditOperations } from "../../src/cli/editing/edit-session";
@@ -545,6 +549,31 @@ printf '%s\n' '{"type":"turn.completed"}'
     expect(secondResult.executedAt).toBe(firstResult.executedAt);
     expect(firstPids).toHaveLength(1);
     expect(secondPids).toEqual(firstPids);
+  });
+
+  test("releasing one shared-check subscriber does not terminate the remaining subscriber", async () => {
+    const root = repo();
+    mkdirSync(join(root, ".repo-harness"), { recursive: true });
+    writeFileSync(join(root, ".repo-harness/checks.json"), JSON.stringify({
+      version: 1,
+      checks: {
+        shared: {
+          command: [process.execPath, "-e", "setTimeout(() => process.exit(0), 350)"],
+          timeoutMs: 5_000,
+        },
+      },
+    }));
+    const first = runControllerCheckAsync(root, "shared", { subscriberId: "subscriber:first" });
+    await Bun.sleep(20);
+    const second = runControllerCheckAsync(root, "shared", { subscriberId: "subscriber:second" });
+    const released = releaseControllerCheckSubscription("subscriber:first");
+    expect(released.released).toBe(true);
+    expect(released.remainingSubscribers).toBe(1);
+    expect(released.terminationRequested).toBe(false);
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(firstResult.ok).toBe(true);
+    expect(secondResult.ok).toBe(true);
+    expect(secondResult.executedAt).toBe(firstResult.executedAt);
   });
 
   test("does not time out a queued check before its worker spawns", () => {

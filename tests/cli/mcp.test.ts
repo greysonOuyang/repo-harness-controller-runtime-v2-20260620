@@ -140,14 +140,14 @@ describe('mcp command', () => {
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/greyson/DevProjects/yaozhunshi/.ai/local/repo-harness-mcp-launch.sh</string>
+    <string>/Users/example/DevProjects/yaozhunshi/.ai/local/repo-harness-mcp-launch.sh</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/Users/greyson/DevProjects/yaozhunshi</string>
+  <string>/Users/example/DevProjects/yaozhunshi</string>
 </dict>
 </plist>`;
     expect(parseLaunchAgentLabel(plist)).toBe('com.greyson.yaozhunshi.repo-harness-mcp');
-    expect(isRepoLaunchAgentPlist(plist, '/Users/greyson/DevProjects/yaozhunshi')).toBe(true);
-    expect(isRepoLaunchAgentPlist(plist, '/Users/greyson/DevProjects/other-repo')).toBe(false);
+    expect(isRepoLaunchAgentPlist(plist, '/Users/example/DevProjects/yaozhunshi')).toBe(true);
+    expect(isRepoLaunchAgentPlist(plist, '/Users/example/DevProjects/other-repo')).toBe(false);
   });
 });

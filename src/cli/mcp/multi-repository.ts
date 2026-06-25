@@ -1,6 +1,6 @@
 import { loadMcpLocalConfig } from './auth';
 import { getMcpPolicy, parseMcpProfile } from './policy';
-import { buildMcpToolDefinitions, callMcpTool, type McpToolContext, type McpToolDefinition } from './tools';
+import { buildMcpToolDefinitions, callMcpTool, type CallToolResult, type McpToolContext, type McpToolDefinition } from './tools';
 import { DEFAULT_AGENT_TIMEOUT_MS, MAX_AGENT_TIMEOUT_MS, normalizeAgentTimeoutMs } from '../controller/runtime-config';
 import type { McpAgentRunnerName } from './types';
 import { ensureControllerHome } from '../repositories/controller-home';
@@ -26,11 +26,7 @@ export interface MultiRepositoryMcpToolContext extends McpToolContext {
   explicitRepository?: RepositoryRecord;
 }
 
-interface ToolResult {
-  content: Array<{ type: 'text'; text: string }>;
-  structuredContent?: unknown;
-  isError?: boolean;
-}
+type ToolResult = CallToolResult;
 
 const EXECUTION_STORAGE_TOOLS = new Set([
   'dispatch_task',

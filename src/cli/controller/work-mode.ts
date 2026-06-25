@@ -63,8 +63,6 @@ export function assessWorkMode(input: WorkModeAssessmentInput): WorkModeAssessme
 
   const discoveryRequired = input.requiresInvestigation === true || paths.length === 0;
   const direct =
-    risk !== 'high' &&
-    risk !== 'destructive' &&
     paths.length <= 8 &&
     expectedFiles <= 8 &&
     expectedChangedLines <= 1000;

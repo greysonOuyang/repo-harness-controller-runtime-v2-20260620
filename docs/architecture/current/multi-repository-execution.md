@@ -331,35 +331,41 @@ A disabled repository:
 
 A soft-removed repository remains addressable with `include_removed` for audit and recovery. Removal does not delete evidence automatically.
 
-## 18. Current Implementation
+## 18. Implemented Runtime
 
-Current capabilities include:
+The current runtime provides:
 
-- stable repository registry;
-- multiple checkout records;
-- Controller Home per-repository storage;
-- `repo_id` and `checkout_id` MCP routing;
-- repository-scoped locks;
-- workbench aggregation;
-- preliminary Umbrella Issue state;
-- optional GitHub mapping.
+- stable repository registry and multiple checkout records;
+- repository-scoped Controller Home storage;
+- explicit `repo_id` and `checkout_id` routing;
+- one logical Repo Actor mailbox per repository;
+- global Worker, Agent, provider, Heavy Check, CPU and memory budgets;
+- persisted aging/fairness state across Daemon restart;
+- repository-local Claims, renewable Leases and fencing tokens;
+- Portfolio DAG dependencies with deterministic stop or Saga compensation;
+- repository-scoped Schedule Occurrences;
+- explicit repository identity and remote-mapping drift diagnostics;
+- disabled/removed repository admission barriers while retaining audit reads.
 
-## 19. Migration Gaps
+## 19. Compatibility and Extension Rules
 
-- global fairness and quota scheduler is not explicit;
-- Repo Actors are logical design, not implemented mailbox owners;
-- Umbrella state lacks a full cross-repository DAG, checkpoint, compensation, and retry contract;
-- cross-repository shared resources are not first-class Claims;
-- remote mapping inconsistencies are not always surfaced early enough;
-- duplicate registry prevention and migration diagnostics need stronger invariants;
-- cross-repository schedules are not first-class.
+The legacy Umbrella entity remains readable for stored-state compatibility. New cross-repository execution ownership belongs to `PortfolioWorkflow`, not Umbrella mutation code.
 
-## 20. Migration Rule
+New multi-repository features must:
 
-Until the full Global Scheduler exists:
+- create repository-scoped durable Jobs;
+- declare cross-repository dependencies explicitly;
+- avoid global repository locks;
+- preserve independent failure, retry, budget and evidence per repository;
+- route external publication through verified repository/GitHub mapping;
+- add an ADR before weakening fairness or repository isolation.
 
-- every execution request must include stable `repoId` when ambiguity exists;
-- repository-local locks must not be promoted to global locks;
-- multi-repository loops must dispatch repository-scoped Jobs independently;
-- cross-repository dependencies must be recorded explicitly, not assumed from execution order;
-- remote publication must use explicit verified mapping.
+## 20. Runtime Verification
+
+The architecture gate and process smokes verify that:
+
+- Scheduler dispatch history is persisted;
+- one repository can wait without blocking another repository's actor;
+- Portfolio dependency cycles are rejected;
+- external side effects are rejected in unattended Portfolio execution;
+- Worker failure is reconciled through durable Job state rather than Gateway lifetime.

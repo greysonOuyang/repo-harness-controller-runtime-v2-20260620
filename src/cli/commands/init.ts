@@ -771,6 +771,11 @@ export async function runInteractiveInit(opts: InteractiveInitOptions = {}): Pro
         };
     }
 
+    if (brainChoice === "custom") {
+      throw new Error("custom brain root selection was not resolved");
+    }
+    const resolvedBrainChoice: BrainRootChoice = brainChoice;
+
     const brainMode = await askChoice<InitBrainMode>(
       rl,
       output,
@@ -787,7 +792,7 @@ export async function runInteractiveInit(opts: InteractiveInitOptions = {}): Pro
       `repo=${repoRoot}`,
       `target=${target}`,
       `reporting=${reportLanguageInstruction}`,
-      `brainRoot=${brainChoice.root}`,
+      `brainRoot=${resolvedBrainChoice.root}`,
       `brainMode=${brainMode}`,
       "CodeGraph=required ensure --init --sync plus global MCP configure",
       `apply=${opts.apply === false ? "false" : "true"}`,
@@ -815,7 +820,7 @@ export async function runInteractiveInit(opts: InteractiveInitOptions = {}): Pro
       configureCodegraphMcp: true,
       syncCodegraph: true,
       globalContext: { reportLanguageInstruction },
-      brainRoot: brainChoice.root,
+      brainRoot: resolvedBrainChoice.root,
       brainMode,
     });
   } finally {

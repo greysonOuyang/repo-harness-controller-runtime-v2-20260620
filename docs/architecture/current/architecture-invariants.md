@@ -6,7 +6,7 @@ These invariants are the architectural constitution of repo-harness Controller R
 
 ## Invariant 1 — MCP Requests Do Not Own Long Work
 
-**Target Architecture — MUST**
+**Current Implementation — MUST**
 
 Any operation that may exceed a short request budget MUST become a durable Job and return an identifier before execution completes.
 
@@ -21,13 +21,13 @@ This includes:
 - multi-repository rollout;
 - schedule-driven work.
 
-**Migration Rule**
+**Compatibility Rule**
 
-While some current tool handlers still await long operations, new handlers MUST use the durable Job path, and touched legacy handlers SHOULD be migrated rather than copied.
+Controller-profile long and mutating handlers use the durable Job path. Legacy operation implementations are Worker-only compatibility adapters and MUST NOT be invoked by Gateway request handlers.
 
 ## Invariant 2 — Persist Before Execute
 
-**Target Architecture — MUST**
+**Current Implementation — MUST**
 
 The system MUST persist accepted intent, identity, scope, deadline, and idempotency data before starting a Worker or external session.
 
@@ -45,7 +45,7 @@ validate -> persist -> acknowledge -> dispatch
 
 ## Invariant 3 — Every Mutation Is Idempotent
 
-**Target Architecture — MUST**
+**Current Implementation — MUST**
 
 Every write or execution command MUST have a stable idempotency identity derived from:
 
@@ -73,7 +73,7 @@ Run success does not by itself mean Task completion.
 
 ## Invariant 5 — Job and Run Are Distinct
 
-**Target Architecture — MUST**
+**Current Implementation — MUST**
 
 A Job represents an asynchronous system operation. A Run represents an Agent attempt.
 
@@ -83,7 +83,7 @@ Job status MUST NOT be inferred solely from “a Run was dispatched.” It reach
 
 ## Invariant 6 — One Logical Scheduler Owns Each Repository
 
-**Target Architecture — MUST**
+**Current Implementation — MUST**
 
 One logical Repo Actor owns repository-local ordering, claims, conflict decisions, integration, and release freeze.
 
@@ -93,7 +93,7 @@ Focus is presentation state, not an execution lock.
 
 ## Invariant 7 — Repository Failures Are Isolated
 
-**Target Architecture — MUST**
+**Current Implementation — MUST**
 
 A blocked, overloaded, corrupt, or disconnected repository MUST NOT block unrelated repositories.
 
@@ -101,7 +101,7 @@ Global resource limits may delay work fairly, but repository locks, heavy-check 
 
 ## Invariant 8 — Unknown Write Scope Is Conservative
 
-**Target Architecture — MUST**
+**Current Implementation — MUST**
 
 A non-read-only Task with empty or unknown allowed paths claims repository-wide write scope for conflict purposes.
 
@@ -111,7 +111,7 @@ A Task may regain concurrency only after scope becomes explicit or execution is 
 
 ## Invariant 9 — Workspace Has One Writer
 
-**Target Architecture — MUST**
+**Current Implementation — MUST**
 
 One checkout Workspace may have at most one active write owner.
 
@@ -125,7 +125,7 @@ Direct Edit and Workspace Agent execution use the same single-writer boundary.
 
 ## Invariant 10 — Worktrees Enable Execution Concurrency, Not Integration Concurrency
 
-**Target Architecture — MUST**
+**Current Implementation — MUST**
 
 Worktree executions may run concurrently when resources allow. Integration into one target checkout is serialized.
 
@@ -133,7 +133,7 @@ Integration MUST validate the reviewed diff, target revision, supported file ope
 
 ## Invariant 11 — Locks Protect Transactions; Leases Protect Execution
 
-**Target Architecture — MUST**
+**Current Implementation — MUST**
 
 Short locks protect atomic state decisions. Long execution is protected by renewable Leases.
 
@@ -163,7 +163,7 @@ When Controller restart loses an in-memory optimization, persisted indexes or bo
 
 ## Invariant 13 — Hot Reads Use Bounded Projections
 
-**Target Architecture — MUST**
+**Current Implementation — MUST**
 
 Status and list endpoints MUST read bounded indexes or materialized projections.
 
@@ -173,7 +173,7 @@ Explicit detail tools may perform bounded entity-specific reads.
 
 ## Invariant 14 — Execution and Observation Are Independent
 
-**Target Architecture — MUST**
+**Current Implementation — MUST**
 
 Heavy work MUST NOT prevent health, repository status, Job status, Run status, or controller context queries from responding.
 
@@ -181,7 +181,7 @@ Gateway and projection availability are separate from Worker health. A Worker cr
 
 ## Invariant 15 — State Writes Are Atomic
 
-**Current Implementation is partial; Target Architecture — MUST**
+**Current Implementation — MUST**
 
 Lifecycle snapshots, indexes, Job records, Run metadata, results, verification records, and Lease state MUST be written atomically.
 
@@ -189,7 +189,7 @@ Readers must never observe a half-written JSON document. Append-only event logs 
 
 ## Invariant 16 — Evidence Binds to Exact Revision
 
-**Target Architecture — MUST**
+**Current Implementation — MUST**
 
 Verification evidence includes:
 
@@ -223,7 +223,7 @@ The original error, output, timestamps, resource ownership, and evidence remain 
 
 ## Invariant 19 — Cancellation Is Scoped
 
-**Target Architecture — MUST**
+**Current Implementation — MUST**
 
 Cancelling one subscriber, Job, or client request MUST NOT terminate a shared execution still required by another active subscriber.
 
@@ -231,7 +231,7 @@ Shared checks and deduplicated work maintain independent subscriber state. The s
 
 ## Invariant 20 — Conflict Is Usually a Waiting State
 
-**Target Architecture — SHOULD**
+**Current Implementation — MUST**
 
 Resource contention is modeled as:
 
@@ -248,7 +248,7 @@ It should not be reported as execution failure unless the deadline expires, poli
 
 ## Invariant 21 — Scheduled Work Is Bounded
 
-**Target Architecture — MUST**
+**Current Implementation — MUST**
 
 A Schedule does not own a forever-running Agent. Each trigger creates one bounded Occurrence with:
 
@@ -265,7 +265,7 @@ A valid outcome may be `nothing_to_do`.
 
 ## Invariant 22 — Automation Does Not Invent Unlimited Work
 
-**Target Architecture — MUST**
+**Current Implementation — MUST**
 
 Automated triage may create a Candidate Finding. It may create or update a formal Issue/Task only when evidence and configured policy justify it.
 
@@ -279,23 +279,17 @@ The system MUST NOT automatically force-push, rewrite history, publish packages,
 
 ## Invariant 24 — One Rule Has One Owning Document
 
-**Target Architecture — MUST**
+**Current Implementation — MUST**
 
 Normative architecture rules live in the document assigned by `governance.md`. Other documents link to the owner rather than maintaining a competing copy.
 
 Versioned design documents cannot override the current set.
 
-## Invariant 25 — Architecture Claims Must Expose Migration Gaps
+## Invariant 25 — Architecture Claims Must Remain Executably Verifiable
 
-**Target Architecture — MUST**
+**Current Implementation — MUST**
 
-A target rule must not be written as though it already exists.
-
-Every material gap between Current Implementation and Target Architecture must be either:
-
-- linked to an Issue/Task;
-- recorded in `migration-roadmap.md`;
-- covered by an explicit Migration Rule.
+A capability may be labeled implemented only when a repository path and an executable check support the claim. Future gaps or regressions must be linked to an Issue/Task or ADR rather than hidden by documentation wording. The completed migration record is not permission to weaken a boundary without updating code, tests and the current architecture set.
 
 ## Review Use
 

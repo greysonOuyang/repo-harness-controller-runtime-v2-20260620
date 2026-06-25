@@ -1,5 +1,11 @@
 # repo-harness V5 Execution and Closure
 
+> **Historical Design — Not Runtime Authority**
+>
+> This document records the V5 execution-and-closure design and remains available for migration history and audit. It may describe behavior that is still implemented, superseded, or not yet migrated.
+>
+> Current Controller Runtime architecture: [docs/architecture/current/README.md](architecture/current/README.md).
+
 V5 changes the Controller from a progress observer into a bounded execution-and-closeout system. Local Issue, Task, Run, Verification, and worklog files remain authoritative. GitHub remains optional.
 
 ## Problem addressed

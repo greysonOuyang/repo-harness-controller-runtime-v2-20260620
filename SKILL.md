@@ -68,7 +68,7 @@ Always start with structured inspection, not prompt guessing.
 Run:
 
 - `bun scripts/inspect-project-state.ts --repo <path> --format text`
-  - fallback: `node --experimental-strip-types scripts/inspect-project-state.ts --repo <path> --format text`
+  - fallback: `node --loader ./src/runtime/shared/node-ts-loader.mjs scripts/inspect-project-state.ts --repo <path> --format text`
 
 Read the result fields:
 

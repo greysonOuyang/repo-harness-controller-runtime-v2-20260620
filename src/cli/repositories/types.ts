@@ -7,6 +7,7 @@ export interface GitHubRepositoryMapping {
   repository?: string;
   projectOwner?: string;
   projectNumber?: number;
+  statusField?: string;
   labels?: string[];
   pluginEnabled?: boolean;
   syncMode?: 'manual' | 'checkpoint';
@@ -80,6 +81,9 @@ export interface RepositoryValidation {
   identityMatches: boolean;
   canonicalRoot: string;
   canonicalRemote?: string;
+  registryCanonicalRemote?: string;
+  githubRemoteRepository?: string;
+  githubMappingMatches?: boolean;
   errors: string[];
   warnings: string[];
   checkedAt: string;

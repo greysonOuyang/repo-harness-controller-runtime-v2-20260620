@@ -345,20 +345,10 @@ The dispatch layer MUST avoid:
 - allowing an automation Agent to recursively create unlimited work;
 - using the Controller conversation as the only execution state.
 
-## 13. Current Implementation and Migration
+## 13. Current Implementation
 
-### Current Implementation
+The repository implements Direct Edit, Quick Agent and Issue/Task assessment; runtime Agent selection; bounded Task scope; persistent Runs; Workspace/Worktree placement; and risk-adaptive verification.
 
-The repository already implements `direct_edit`, `quick_agent`, and `issue_task` assessment; runtime Agent selection; bounded Task scopes; persistent Runs; optional Worktrees; and risk-adaptive verification.
+The Thin Gateway converts Agent dispatch into durable Execution Jobs. The Repo Actor owns placement and resource Claims. Automatic placement uses the current Workspace when it is available and switches a concurrent eligible Agent to an isolated Worktree. Agent provider is selected at execution time and global provider quotas are enforced by the Scheduler.
 
-### Migration Gaps
-
-- work assessment thresholds are still implementation heuristics rather than repository-configurable policy;
-- execution budgets are not consistently represented across every Job type;
-- Agent role is implicit in prompts rather than a first-class execution contract field;
-- failure classification is not yet a durable normalized result;
-- placement and resource-claim decisions are not yet owned by an explicit Repo Actor.
-
-### Migration Rule
-
-New execution surfaces must use this decision model and must not create a fourth competing work mode without an ADR.
+Failure outcomes are retained on the Job and Run; retries preserve the failed attempt and create a new execution attempt.

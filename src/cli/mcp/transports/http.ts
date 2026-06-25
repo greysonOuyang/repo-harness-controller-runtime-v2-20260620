@@ -7,7 +7,7 @@ import { redirectUriMatches } from '@modelcontextprotocol/sdk/server/auth/handle
 import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import type { OAuthClientInformationFull } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { createMcpToolContext, createRepoHarnessMcpServer, type McpServerOptions } from '../server';
+import { buildMultiRepositoryToolDefinitions, createMcpToolContext, createRepoHarnessMcpServerFromContext, type McpServerOptions } from '../server';
 import {
   loadMcpLocalConfig,
   mcpOAuthTokenStorePath,
@@ -19,6 +19,12 @@ import {
 import { createMcpOAuthProvider, McpOAuthTokenStore } from '../oauth';
 import { resolveMcpRepoRoot } from '../repo';
 import { buildMcpToolDefinitions, controllerExpectedToolNames } from '../tools';
+import { repositoryToolDefinitions } from '../repository-tools';
+import { runtimeToolDefinitions } from '../../../runtime/gateway/mcp/runtime-tools';
+import { injectDurableCommandFields } from '../../../runtime/gateway/mcp/router';
+import { ensureControllerDaemon, readControllerDaemonStatus } from '../../../runtime/control-plane/daemon-client';
+import { rebuildRepositoryProjection } from '../../../runtime/projections/materialized-view';
+import { getRepository } from '../../repositories/registry';
 import {
   CONTROLLER_SCHEMA_VERSION,
   CONTROLLER_TOOL_SURFACE,
@@ -259,7 +265,62 @@ function requireMcpHttpAuth(
   };
 }
 
-async function handleMcpPost(req: Request, res: Response, opts: McpHttpOptions, transports: Map<string, StreamableHTTPServerTransport>): Promise<void> {
+interface ManagedTransport {
+  transport: StreamableHTTPServerTransport;
+  lastSeenAt: number;
+  inFlightPosts: number;
+  inFlightGets: number;
+}
+
+interface McpRuntimeStats {
+  initializing: number;
+  activePosts: number;
+  rejectedOverload: number;
+}
+
+const MAX_MCP_SESSIONS = 64;
+const MAX_INITIALIZING_SESSIONS = 8;
+const MAX_POSTS_PER_SESSION = 4;
+const MAX_ACTIVE_POSTS = 32;
+const MCP_SESSION_TTL_MS = 15 * 60_000;
+
+async function closeManagedTransport(entry: ManagedTransport): Promise<void> {
+  try {
+    await entry.transport.close();
+  } catch (_error) {
+    // Session may already be closed by the client.
+  }
+}
+
+async function pruneTransports(transports: Map<string, ManagedTransport>, forceCapacity = false): Promise<boolean> {
+  const now = Date.now();
+  const expired = [...transports.entries()]
+    .filter(([, entry]) => entry.inFlightPosts === 0 && entry.inFlightGets === 0 && now - entry.lastSeenAt > MCP_SESSION_TTL_MS)
+    .map(([sessionId]) => sessionId);
+  for (const sessionId of expired) {
+    const entry = transports.get(sessionId);
+    transports.delete(sessionId);
+    if (entry) await closeManagedTransport(entry);
+  }
+  if (!forceCapacity || transports.size < MAX_MCP_SESSIONS) return transports.size < MAX_MCP_SESSIONS;
+  const oldest = [...transports.entries()]
+    .filter(([, entry]) => entry.inFlightPosts === 0 && entry.inFlightGets === 0)
+    .sort((a, b) => a[1].lastSeenAt - b[1].lastSeenAt);
+  while (transports.size >= MAX_MCP_SESSIONS && oldest.length > 0) {
+    const [sessionId, entry] = oldest.shift()!;
+    transports.delete(sessionId);
+    await closeManagedTransport(entry);
+  }
+  return transports.size < MAX_MCP_SESSIONS;
+}
+
+async function handleMcpPost(
+  req: Request,
+  res: Response,
+  toolContext: ReturnType<typeof createMcpToolContext>,
+  transports: Map<string, ManagedTransport>,
+  stats: McpRuntimeStats,
+): Promise<void> {
   let body: unknown;
   try {
     body = rawBodyToJson(req.body as Buffer);
@@ -269,36 +330,81 @@ async function handleMcpPost(req: Request, res: Response, opts: McpHttpOptions, 
   }
   const sessionId = req.headers['mcp-session-id'] as string | undefined;
   if (!sessionId && isInitializeRequest(body)) {
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-      onsessioninitialized: (newSessionId) => transports.set(newSessionId, transport),
-    });
-    transport.onclose = () => {
-      if (transport.sessionId) transports.delete(transport.sessionId);
-    };
-    const server = createRepoHarnessMcpServer(opts);
-    await server.connect(transport);
-    await transport.handleRequest(req, res, body);
+    if (stats.initializing >= MAX_INITIALIZING_SESSIONS || stats.activePosts >= MAX_ACTIVE_POSTS) {
+      stats.rejectedOverload += 1;
+      res.setHeader('retry-after', '1');
+      res.status(503).json({ error: 'server_busy', message: 'Too many MCP sessions are initializing; retry shortly' });
+      return;
+    }
+    stats.initializing += 1;
+    stats.activePosts += 1;
+    let transport: StreamableHTTPServerTransport | undefined;
+    try {
+      const hasCapacity = await pruneTransports(transports, true);
+      if (!hasCapacity || transports.size + stats.initializing > MAX_MCP_SESSIONS) {
+        stats.rejectedOverload += 1;
+        res.setHeader('retry-after', '1');
+        res.status(503).json({ error: 'session_capacity', message: 'All MCP sessions are active; retry shortly' });
+        return;
+      }
+      transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        onsessioninitialized: (newSessionId: string): void => {
+          transports.set(newSessionId, { transport: transport!, lastSeenAt: Date.now(), inFlightPosts: 0, inFlightGets: 0 });
+        },
+      });
+      transport.onclose = () => {
+        if (transport?.sessionId) transports.delete(transport.sessionId);
+      };
+      const server = createRepoHarnessMcpServerFromContext(toolContext);
+      await server.connect(transport);
+      await transport.handleRequest(req, res, body);
+    } finally {
+      stats.initializing -= 1;
+      stats.activePosts -= 1;
+      if (!transport?.sessionId) await transport?.close().catch(() => undefined);
+    }
     return;
   }
   if (sessionId) {
-    const transport = transports.get(sessionId);
-    if (transport) {
-      await transport.handleRequest(req, res, body);
+    const managed = transports.get(sessionId);
+    if (managed) {
+      if (managed.inFlightPosts >= MAX_POSTS_PER_SESSION || stats.activePosts >= MAX_ACTIVE_POSTS) {
+        stats.rejectedOverload += 1;
+        res.setHeader('retry-after', '1');
+        res.status(429).json({ error: 'session_busy', message: 'Too many MCP requests are active; retry shortly' });
+        return;
+      }
+      managed.lastSeenAt = Date.now();
+      managed.inFlightPosts += 1;
+      stats.activePosts += 1;
+      try {
+        await managed.transport.handleRequest(req, res, body);
+      } finally {
+        managed.inFlightPosts -= 1;
+        stats.activePosts -= 1;
+      }
       return;
     }
   }
   res.status(400).json({ error: 'No valid session' });
 }
 
-async function handleMcpGet(req: Request, res: Response, transports: Map<string, StreamableHTTPServerTransport>): Promise<void> {
+async function handleMcpGet(req: Request, res: Response, transports: Map<string, ManagedTransport>): Promise<void> {
   const sessionId = req.headers['mcp-session-id'] as string | undefined;
-  const transport = sessionId ? transports.get(sessionId) : undefined;
-  if (!transport) {
+  const managed = sessionId ? transports.get(sessionId) : undefined;
+  if (!managed) {
     res.status(400).json({ error: 'No valid session' });
     return;
   }
-  await transport.handleRequest(req, res);
+  managed.lastSeenAt = Date.now();
+  managed.inFlightGets += 1;
+  try {
+    await managed.transport.handleRequest(req, res);
+  } finally {
+    managed.inFlightGets -= 1;
+    managed.lastSeenAt = Date.now();
+  }
 }
 
 export async function startMcpHttp(opts: McpHttpOptions): Promise<void> {
@@ -312,17 +418,27 @@ export async function startMcpHttp(opts: McpHttpOptions): Promise<void> {
   tokenStore?.load();
   const oauthProvider = tokenStore ? createMcpOAuthProvider(tokenStore) : null;
   const configuredPublicOrigin = getConfiguredPublicOrigin(repoRoot);
-  const transports = new Map<string, StreamableHTTPServerTransport>();
+  const transports = new Map<string, ManagedTransport>();
+  const runtimeStats: McpRuntimeStats = { initializing: 0, activePosts: 0, rejectedOverload: 0 };
   const toolContext = createMcpToolContext({ ...opts, repo: repoRoot });
-  const toolDefinitions = buildMcpToolDefinitions(toolContext.policy, { enableChatgptBrowser: opts.enableChatgptBrowser === true });
+  const runtimeControllerHome = 'controllerHome' in toolContext ? toolContext.controllerHome : undefined;
+  if (runtimeControllerHome) ensureControllerDaemon(runtimeControllerHome);
+  const compatibilityToolDefinitions = buildMcpToolDefinitions(toolContext.policy, { enableChatgptBrowser: opts.enableChatgptBrowser === true });
+  const toolDefinitions = 'controllerHome' in toolContext
+    ? runtimeToolDefinitions.concat(repositoryToolDefinitions, buildMultiRepositoryToolDefinitions(toolContext)).map(injectDurableCommandFields)
+    : compatibilityToolDefinitions;
   const controllerToolNames = toolContext.policy.profile === 'controller'
     ? controllerExpectedToolNames(toolContext.policy, { enableChatgptBrowser: opts.enableChatgptBrowser === true })
     : [];
+  const runtimeToolNames = toolDefinitions.map((tool) => tool.name);
   const toolSurface = toolContext.policy.profile === 'controller' ? CONTROLLER_TOOL_SURFACE : `${toolContext.policy.profile}-legacy-v1`;
   const toolSurfaceSchemaVersion = toolContext.policy.profile === 'controller' ? CONTROLLER_SCHEMA_VERSION : 1;
   const toolSurfaceVersion = toolContext.policy.profile === 'controller' ? CONTROLLER_TOOL_SURFACE_VERSION : 1;
   const toolSurfaceFingerprint = toolContext.policy.profile === 'controller'
     ? controllerToolSurfaceFingerprint(controllerToolNames)
+    : undefined;
+  const runtimeToolSurfaceFingerprint = toolContext.policy.profile === 'controller'
+    ? controllerToolSurfaceFingerprint(runtimeToolNames)
     : undefined;
   const repoId = repositoryIdentity(repoRoot);
   const startedAt = new Date().toISOString();
@@ -343,7 +459,9 @@ export async function startMcpHttp(opts: McpHttpOptions): Promise<void> {
       schemaVersion: toolSurfaceSchemaVersion,
       toolSurfaceVersion,
       toolSurfaceFingerprint,
+      runtimeToolSurfaceFingerprint,
       toolCount: toolDefinitions.length,
+      compatibilityToolCount: compatibilityToolDefinitions.length,
       repoId,
       startedAt,
       runner: {
@@ -352,7 +470,44 @@ export async function startMcpHttp(opts: McpHttpOptions): Promise<void> {
         maxTimeoutMs: toolContext.policy.execution.runnerMaxTimeoutMs,
       },
       auth: authMode === 'oauth' ? (oauthPassphrase ? 'oauth' : 'missing') : (authToken ? 'required' : 'missing'),
+      sessions: {
+        active: transports.size,
+        maximum: MAX_MCP_SESSIONS,
+        initializing: runtimeStats.initializing,
+        activePosts: runtimeStats.activePosts,
+        activeStreams: [...transports.values()].reduce((count, entry) => count + entry.inFlightGets, 0),
+        maximumActivePosts: MAX_ACTIVE_POSTS,
+        rejectedOverload: runtimeStats.rejectedOverload,
+      },
     });
+  });
+
+  app.get('/ready', (_req, res) => {
+    if (!runtimeControllerHome) {
+      res.status(200).json({ ready: true, profile: toolContext.policy.profile, gateway: 'ready', controllerDaemon: 'not-required' });
+      return;
+    }
+    const daemon = readControllerDaemonStatus(runtimeControllerHome);
+    const ready = daemon.status === 'ready';
+    res.status(ready ? 200 : 503).json({
+      ready,
+      gateway: { status: 'ready', thin: true, eventLoopIsolatedFromWorkers: true },
+      controllerDaemon: daemon,
+    });
+  });
+
+  app.get('/repos/:repoId/health', (req, res) => {
+    if (!runtimeControllerHome) {
+      res.status(404).json({ error: 'controller profile required' });
+      return;
+    }
+    try {
+      const repository = getRepository(req.params.repoId, runtimeControllerHome, { includeRemoved: true });
+      const projection = rebuildRepositoryProjection(runtimeControllerHome, repository.repoId);
+      res.json({ status: repository.enabled && !repository.removedAt ? 'ok' : 'disabled', repository: { repoId: repository.repoId, checkoutId: repository.activeCheckoutId, enabled: repository.enabled, removedAt: repository.removedAt }, projection });
+    } catch (error) {
+      res.status(404).json({ error: error instanceof Error ? error.message : String(error) });
+    }
   });
 
   if (authMode === 'oauth' && oauthProvider) {
@@ -410,7 +565,7 @@ export async function startMcpHttp(opts: McpHttpOptions): Promise<void> {
     next();
   });
   app.post('/mcp', requireMcpHttpAuth(authMode, authToken, oauthProvider, configuredPublicOrigin), express.raw({ type: '*/*', limit: '1mb' }), (req, res) => {
-    handleMcpPost(req, res, { ...opts, repo: repoRoot }, transports).catch((error: unknown) => {
+    handleMcpPost(req, res, toolContext, transports, runtimeStats).catch((error: unknown) => {
       if (!res.headersSent) res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
     });
   });
@@ -421,7 +576,19 @@ export async function startMcpHttp(opts: McpHttpOptions): Promise<void> {
   });
   app.use((_req, res) => res.status(404).json({ error: 'not_found' }));
 
+  const cleanupTimer = setInterval(() => { void pruneTransports(transports); }, 60_000);
+  cleanupTimer.unref();
+
   const httpServer = app.listen(port, host);
+  httpServer.keepAliveTimeout = 65_000;
+  httpServer.headersTimeout = 70_000;
+  httpServer.requestTimeout = 120_000;
+
+  httpServer.on('close', () => {
+    clearInterval(cleanupTimer);
+    for (const entry of transports.values()) void closeManagedTransport(entry);
+    transports.clear();
+  });
 
   await new Promise<void>((resolve) => {
     httpServer.once('listening', resolve);
@@ -430,8 +597,8 @@ export async function startMcpHttp(opts: McpHttpOptions): Promise<void> {
   console.error(`repo-harness mcp http listening on http://${host}:${port}/mcp (auth: ${authLabel})`);
 
   const shutdown = () => {
-    for (const transport of transports.values()) {
-      void transport.close().catch(() => undefined);
+    for (const entry of transports.values()) {
+      void closeManagedTransport(entry);
     }
     tokenStore?.flush();
     httpServer.close(() => process.exit(0));

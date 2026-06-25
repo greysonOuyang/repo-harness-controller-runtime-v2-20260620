@@ -309,7 +309,6 @@ export async function checkNativeChatgptSession(input: {
   const profileDirectory = input.profileDirectory;
   const timeoutMs = input.timeoutMs ?? 30_000;
   let connection: CdpConnection | undefined;
-  let sessionId: string | undefined;
   if (nativeDebuggingBlockedByDefaultProfile(profileDir, channel)) {
     return {
       status: 'failed',
@@ -326,7 +325,8 @@ export async function checkNativeChatgptSession(input: {
     connection = await connectCdp(version.webSocketDebuggerUrl);
     const target = await connection.send('Target.createTarget', { url: 'about:blank' });
     const attached = await connection.send('Target.attachToTarget', { targetId: target.targetId, flatten: true });
-    sessionId = attached.sessionId;
+    const sessionId = attached.sessionId;
+    if (!sessionId) throw new Error('Chrome did not return a CDP session id');
     await connection.send('Page.enable', {}, sessionId);
     await connection.send('Runtime.enable', {}, sessionId);
     await connection.send('Page.navigate', { url: input.chatgptUrl ?? 'https://chatgpt.com/' }, sessionId);
@@ -450,7 +450,6 @@ export async function runNativeProvider(input: BrowserConsultInput, bundle: Prom
   const profileDirectory = input.profileDirectory;
   const timeoutMs = input.timeoutMs ?? 180_000;
   let connection: CdpConnection | undefined;
-  let sessionId: string | undefined;
   if (nativeDebuggingBlockedByDefaultProfile(profileDir, channel)) {
     const error = defaultProfileCdpBlockedError(channel, profileDir, profileDirectory);
     return {
@@ -466,7 +465,8 @@ export async function runNativeProvider(input: BrowserConsultInput, bundle: Prom
     connection = await connectCdp(version.webSocketDebuggerUrl);
     const target = await connection.send('Target.createTarget', { url: 'about:blank' });
     const attached = await connection.send('Target.attachToTarget', { targetId: target.targetId, flatten: true });
-    sessionId = attached.sessionId;
+    const sessionId = attached.sessionId;
+    if (!sessionId) throw new Error('Chrome did not return a CDP session id');
     await connection.send('Page.enable', {}, sessionId);
     await connection.send('Runtime.enable', {}, sessionId);
     await connection.send('Page.navigate', { url: input.chatgptUrl ?? 'https://chatgpt.com/' }, sessionId);

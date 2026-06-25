@@ -387,13 +387,16 @@ export function runSecurityScan(opts: SecurityScanOptions = {}): SecurityScanRep
   const cwd = opts.cwd ?? process.cwd();
   const home = opts.home ?? homeDir();
   const repoRoot = resolveRepoRoot(cwd);
-  const scannedFiles: SecurityScannedFile[] = [
+  const scannedFiles = ([
     { filePath: path.join(home, '.claude', 'settings.json'), kind: 'claude-hooks', exists: false },
     { filePath: path.join(home, '.codex', 'hooks.json'), kind: 'codex-hooks', exists: false },
     { filePath: path.join(repoRoot, '.vscode', 'tasks.json'), kind: 'vscode-tasks', exists: false },
     { filePath: path.join(repoRoot, '.claude', 'settings.json'), kind: 'claude-hooks', exists: false },
     { filePath: path.join(repoRoot, '.codex', 'hooks.json'), kind: 'codex-hooks', exists: false },
-  ].map((entry) => ({ ...entry, exists: fs.existsSync(entry.filePath) }));
+  ] satisfies Array<Omit<SecurityScannedFile, "exists"> & { exists: false }>).map<SecurityScannedFile>((entry) => ({
+    ...entry,
+    exists: fs.existsSync(entry.filePath),
+  }));
 
   const findings: SecurityFinding[] = [];
   scanHookConfig(findings, scannedFiles[0].filePath, 'Claude user-level', false);

@@ -63,7 +63,7 @@
 
 真正的阻断项是：
 
-- 带个人用户名或机器目录的绝对路径，如 `/Users/greyson/...`、`/Users/ancienttwo/...`、`/Users/chris/...`、`/Users/kito/...`
+- 带个人用户名或机器目录的绝对路径，如 `/Users/example/...`、`/Users/ancienttwo/...`、`/Users/chris/...`、`/Users/kito/...`
 - 暴露内部 controller 存储根、工作树名称、实验分支名、临时 quick tunnel URL、维护者本地 npm/prefix 路径、私有 source checkout 路径的历史文档或运行产物
 
 ## 阻断项
@@ -75,13 +75,13 @@
 - `.ai/harness/repository.json:1-5`
   - 暴露 `repoId` 与 `checkoutId`，如 `repo_123b7cf58b6b17b5cbe46a56`
 - `.ai/harness/` 下多个条目是已跟踪符号链接，直接指向 maintainer 本机 controller 存储：
-  - `.ai/harness/artifacts -> /Users/greyson/.repo-harness/controller/repositories/...`
-  - `.ai/harness/controller -> /Users/greyson/.repo-harness/controller/repositories/...`
-  - `.ai/harness/edit-sessions -> /Users/greyson/.repo-harness/controller/repositories/...`
-  - `.ai/harness/ephemeral-issues -> /Users/greyson/.repo-harness/controller/repositories/...`
-  - `.ai/harness/jobs -> /Users/greyson/.repo-harness/controller/repositories/...`
-  - `.ai/harness/local-bridge -> /Users/greyson/.repo-harness/controller/repositories/...`
-  - `.ai/harness/worktrees -> /Users/greyson/.repo-harness/controller/repositories/...`
+  - `.ai/harness/artifacts -> /Users/example/.repo-harness/controller/repositories/...`
+  - `.ai/harness/controller -> /Users/example/.repo-harness/controller/repositories/...`
+  - `.ai/harness/edit-sessions -> /Users/example/.repo-harness/controller/repositories/...`
+  - `.ai/harness/ephemeral-issues -> /Users/example/.repo-harness/controller/repositories/...`
+  - `.ai/harness/jobs -> /Users/example/.repo-harness/controller/repositories/...`
+  - `.ai/harness/local-bridge -> /Users/example/.repo-harness/controller/repositories/...`
+  - `.ai/harness/worktrees -> /Users/example/.repo-harness/controller/repositories/...`
 
 影响：
 
@@ -145,7 +145,7 @@
   - `/Users/ancienttwo/Astrozi/...`
   - `/Users/ancienttwo/Projects/agentic-dev/...`
 - `plans/prds/20260619-1721-repo-harness-document-governance-cleanup.prd.md:65`
-  - `/Users/greyson/DevProjects/repo-harness`
+  - `/Users/example/DevProjects/repo-harness`
 
 影响：
 

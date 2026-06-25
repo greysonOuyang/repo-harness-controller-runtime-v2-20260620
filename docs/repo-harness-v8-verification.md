@@ -1,5 +1,11 @@
 # repo-harness V8 Verification Record
 
+> **Historical Design — Not Runtime Authority**
+>
+> This document records the V8 verification baseline and remains available for migration history and audit. It is evidence for that version, not the authority for current or target runtime behavior.
+>
+> Current Controller Runtime architecture: [docs/architecture/current/README.md](architecture/current/README.md).
+
 ## Scope
 
 This record covers the V8 changes introduced on top of the user-provided V7 full replacement package dated 2026-06-22.

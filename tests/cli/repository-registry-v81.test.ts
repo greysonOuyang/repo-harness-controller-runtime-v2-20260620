@@ -12,6 +12,7 @@ import {
   listRepositories,
   refreshRepository,
   registerRepository,
+  validateRepository,
   resolveRepositorySelection,
 } from '../../src/cli/repositories/registry';
 import { repositoryFixture } from './repository-v81-fixture';
@@ -63,6 +64,26 @@ describe('v8.1 repository identity and selection', () => {
       expect(refreshed.repoId).toBe(registered.repoId);
       expect(refreshed.canonicalRemote).toBe('github.com/example/renamed');
       expect(listRepositories(controllerHome)).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(controllerHome, { recursive: true, force: true });
+    }
+  });
+
+
+  test('reports remote and GitHub mapping drift without changing repoId', () => {
+    const root = mkdtempSync(join(tmpdir(), 'repo-harness-v81-diagnostics-'));
+    const controllerHome = mkdtempSync(join(tmpdir(), 'repo-harness-v81-diagnostics-controller-'));
+    try {
+      execSync('git init -q', { cwd: root });
+      execSync('git remote add origin https://github.com/example/original.git', { cwd: root });
+      const registered = registerRepository({ path: root, controllerHome });
+      execSync('git remote set-url origin https://github.com/example/renamed.git', { cwd: root });
+      const validation = validateRepository(registered.repoId, controllerHome);
+      expect(validation.ok).toBe(false);
+      expect(validation.githubMappingMatches).toBe(false);
+      expect(validation.warnings.join('\n')).toContain('was not changed automatically');
+      expect(listRepositories(controllerHome)[0]?.repoId).toBe(registered.repoId);
     } finally {
       rmSync(root, { recursive: true, force: true });
       rmSync(controllerHome, { recursive: true, force: true });

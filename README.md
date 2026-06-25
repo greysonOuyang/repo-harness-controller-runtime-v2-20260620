@@ -14,7 +14,7 @@
 
 `repo-harness Controller Runtime` is a local-first repository execution bridge for ChatGPT. It gives ChatGPT bounded tools to inspect repositories, manage Issues and Tasks, apply Direct Edits, run named checks, review diffs, and optionally delegate implementation to coding agents.
 
-The project is designed for real repositories rather than disposable chat sessions: plans, task state, execution evidence, checks, and handoffs remain attached to the repository and can be resumed later.
+The project is designed for real repositories rather than disposable chat sessions: plans, task state, execution evidence, checks, and handoffs remain attached to the repository and can be resumed later. The current runtime uses a Thin Gateway, durable Jobs, a Global Scheduler, one Repo Actor per repository, isolated Workers, and an Evidence Plane.
 
 > Current package version: `1.4.0`
 >
@@ -38,6 +38,8 @@ The project is designed for real repositories rather than disposable chat sessio
 | Direct Edit transactions | Multi-revision patches, bounded paths and size, SHA preconditions, savepoints, diff review, checks, and rollback. |
 | Issue → Task → Run workflow | Durable dependency-aware work planning with review and verification gates. |
 | Local Controller UI | Local-only Overview, Work, Activity, and Settings views for Runs, edits, checks, and evidence. |
+| Runtime control plane | Thin Gateway, Global Scheduler, per-repository Actor, durable Execution Jobs, Claims, Leases, fencing, and isolated Workers. |
+| Automation governance | Bounded Schedule/Decision/Occurrence workflows, Candidate Findings, Portfolio DAG/Saga, and release gates. |
 | Runtime isolation | Controller state is stored outside the public source tree and linked only where required at runtime. |
 | Public release tooling | Allowlisted export, path and secret scanning, release-surface checks, and package verification. |
 
@@ -131,6 +133,10 @@ Project instructions are a durable conversation default, not a server-side autho
 
 ## Documentation
 
+- [Current Controller Runtime architecture](docs/architecture/current/README.md)
+- [Verified implementation status and compatibility boundary](docs/architecture/current/implementation-status.md)
+- [Target architecture migration report](ARCHITECTURE_MIGRATION_REPORT.md)
+- [Performance and 502 troubleshooting](docs/operations/controller-performance-and-502.md)
 - [Complete usage guide](docs/public-usage-guide.md)
 - [完整使用指南（简体中文）](docs/public-usage-guide.zh-CN.md)
 - [ChatGPT MCP setup reference](docs/repo-harness-chatgpt-mcp-setup.md)
@@ -162,5 +168,11 @@ This repository is being prepared as an independently publishable open-source di
 bun run check:release-surface
 bun run check:public-export
 bun run check:type
+bun run check:runtime-architecture
+bun run check:mcp-compatibility
+bun run smoke:runtime-recovery
+bun run smoke:schedule-engine
+bun run smoke:runtime-control-plane
+bun run smoke:mcp-http-runtime
 bun run test
 ```

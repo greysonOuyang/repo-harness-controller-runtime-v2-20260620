@@ -99,7 +99,7 @@
               "agent-run",
               "RUN-iss-20260623-dde2e7-t1-1782204405772-6de59a70"
             ],
-            "cwd": "/Users/greyson/DevProjects/repo-harness-controller-runtime/.ai/harness/worktrees/iss-20260623-dde2e7-t1-6de59a70",
+            "cwd": "/Users/example/DevProjects/repo-harness-controller-runtime/.ai/harness/worktrees/iss-20260623-dde2e7-t1-6de59a70",
             "ok": true,
             "exitCode": 0,
             "artifactPath": ".ai/harness/jobs/RUN-iss-20260623-dde2e7-t1-1782204405772-6de59a70/result.json",
@@ -193,7 +193,7 @@
               "agent-run",
               "RUN-iss-20260623-dde2e7-t2-1782204406417-b6bb5653"
             ],
-            "cwd": "/Users/greyson/DevProjects/repo-harness-controller-runtime/.ai/harness/worktrees/iss-20260623-dde2e7-t2-b6bb5653",
+            "cwd": "/Users/example/DevProjects/repo-harness-controller-runtime/.ai/harness/worktrees/iss-20260623-dde2e7-t2-b6bb5653",
             "ok": true,
             "exitCode": 0,
             "artifactPath": ".ai/harness/jobs/RUN-iss-20260623-dde2e7-t2-1782204406417-b6bb5653/result.json",
@@ -289,7 +289,7 @@
               "agent-run",
               "RUN-iss-20260623-dde2e7-t3-1782205042168-09891dfc"
             ],
-            "cwd": "/Users/greyson/DevProjects/repo-harness-controller-runtime/.ai/harness/worktrees/iss-20260623-dde2e7-t3-09891dfc",
+            "cwd": "/Users/example/DevProjects/repo-harness-controller-runtime/.ai/harness/worktrees/iss-20260623-dde2e7-t3-09891dfc",
             "ok": true,
             "exitCode": 0,
             "artifactPath": ".ai/harness/jobs/RUN-iss-20260623-dde2e7-t3-1782205042168-09891dfc/result.json",
@@ -447,7 +447,7 @@
               "agent-run",
               "RUN-iss-20260623-dde2e7-t5-1782205819820-2e5fd9eb"
             ],
-            "cwd": "/Users/greyson/DevProjects/repo-harness-controller-runtime/.ai/harness/worktrees/iss-20260623-dde2e7-t5-2e5fd9eb",
+            "cwd": "/Users/example/DevProjects/repo-harness-controller-runtime/.ai/harness/worktrees/iss-20260623-dde2e7-t5-2e5fd9eb",
             "ok": true,
             "exitCode": 0,
             "artifactPath": ".ai/harness/jobs/RUN-iss-20260623-dde2e7-t5-1782205819820-2e5fd9eb/result.json",

@@ -51,7 +51,7 @@ describe('mcp http transport', () => {
   test('requires bearer auth and accepts authenticated initialize requests', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'repo-harness-mcp-http-'));
     const port = await freePort();
-    let proc: Bun.Subprocess<'ignore', 'pipe', 'pipe'> | null = null;
+    let proc: Bun.Subprocess<'ignore', 'ignore', 'pipe'> | null = null;
     try {
       mkdirSync(join(repoRoot, '.ai/harness'), { recursive: true });
       writeFileSync(join(repoRoot, '.ai/harness/policy.json'), '{}\n');
@@ -82,7 +82,17 @@ describe('mcp http transport', () => {
       await waitForHealth(port);
 
       const health = await fetch(`http://127.0.0.1:${port}/health`);
-      expect(await health.json()).toMatchObject({ status: 'ok', auth: 'required' });
+      expect(await health.json()).toMatchObject({
+        status: 'ok',
+        auth: 'required',
+        sessions: {
+          active: 0,
+          maximum: 64,
+          activePosts: 0,
+          activeStreams: 0,
+          maximumActivePosts: 32,
+        },
+      });
 
       const noAuth = await fetch(`http://127.0.0.1:${port}/mcp`, {
         method: 'POST',
@@ -108,7 +118,29 @@ describe('mcp http transport', () => {
         body: initializeBody(),
       });
       expect(initialized.status).toBe(200);
+      const sessionId = initialized.headers.get('mcp-session-id');
+      expect(sessionId).toBeTruthy();
       expect(await initialized.text()).toContain('repo-harness-mcp');
+
+      const streamController = new AbortController();
+      const stream = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        headers: {
+          authorization: `Bearer ${token}`,
+          'mcp-session-id': sessionId!,
+          accept: 'text/event-stream',
+        },
+        signal: streamController.signal,
+      });
+      expect(stream.status).toBe(200);
+      await Bun.sleep(25);
+      const streamingHealth = await fetch(`http://127.0.0.1:${port}/health`).then((response) => response.json());
+      expect(streamingHealth.sessions.active).toBe(1);
+      expect(streamingHealth.sessions.activeStreams).toBe(1);
+      streamController.abort();
+      await stream.body?.cancel().catch(() => undefined);
+      await Bun.sleep(100);
+      const closedStreamHealth = await fetch(`http://127.0.0.1:${port}/health`).then((response) => response.json());
+      expect(closedStreamHealth.sessions.activeStreams).toBe(0);
     } finally {
       proc?.kill();
       await proc?.exited.catch(() => undefined);
@@ -119,7 +151,7 @@ describe('mcp http transport', () => {
   test('supports ChatGPT-compatible OAuth authorization flow', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'repo-harness-mcp-oauth-'));
     const port = await freePort();
-    let proc: Bun.Subprocess<'ignore', 'pipe', 'pipe'> | null = null;
+    let proc: Bun.Subprocess<'ignore', 'ignore', 'pipe'> | null = null;
     try {
       mkdirSync(join(repoRoot, '.ai/harness'), { recursive: true });
       writeFileSync(join(repoRoot, '.ai/harness/policy.json'), '{}\n');

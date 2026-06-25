@@ -1,8 +1,8 @@
 ---
 id: "ISS-20260625-BBFD4B"
 kind: "governance"
-status: "in_progress"
-updated_at: "2026-06-25T09:02:19.057Z"
+status: "done"
+updated_at: "2026-06-25T11:07:08Z"
 source: "repo-harness-controller-v8"
 ---
 
@@ -31,12 +31,12 @@ source: "repo-harness-controller-v8"
 
 ## Acceptance Criteria
 
-- [ ] docs/architecture/current/ 中存在完整的当前架构文档集合并由 index 明确声明为唯一 Runtime Authority
-- [ ] 当前架构文档覆盖系统边界、架构宪法、实体生命周期、任务分派、资源 Claim、单仓库冲突、多仓库并发、Schedule、故障恢复、验证和发布
-- [ ] 旧 V5-V8 与旧 Controller/Local Bridge 文档具有清晰 Historical Design 标识且链接当前架构入口
-- [ ] 文档明确 MCP 不执行长任务、先持久化后执行、请求幂等、Task 与 Run 分离、仓库 Actor 自治、锁与 Lease 分离、验证绑定 Revision 等不可违反规则
-- [ ] 文档一致性检查能够检测缺失当前架构文件、缺失 Runtime Authority 声明和旧代际文档缺失历史标识
-- [ ] package:check:architecture-sync、相关专项测试和 package:check:type 通过
+- [x] docs/architecture/current/ 中存在完整的当前架构文档集合并由 index 明确声明为唯一 Runtime Authority
+- [x] 当前架构文档覆盖系统边界、架构宪法、实体生命周期、任务分派、资源 Claim、单仓库冲突、多仓库并发、Schedule、故障恢复、验证和发布
+- [x] 旧 V5-V8 与旧 Controller/Local Bridge 文档具有清晰 Historical Design 标识且链接当前架构入口
+- [x] 文档明确 MCP 不执行长任务、先持久化后执行、请求幂等、Task 与 Run 分离、仓库 Actor 自治、锁与 Lease 分离、验证绑定 Revision 等不可违反规则
+- [x] 文档一致性检查能够检测缺失当前架构文件、缺失 Runtime Authority 声明和旧代际文档缺失历史标识
+- [x] package:check:architecture-sync、相关专项测试和 package:check:type 通过
 
 ## GitHub
 
@@ -73,7 +73,7 @@ source: "repo-harness-controller-v8"
 
 ### T4 — 落地故障恢复、验证与发布门
 
-- Status: `running`
+- Status: `done`
 - Objective: 编写 Gateway/Controller/Worker 故障边界、Lease/Fencing、重启恢复、状态索引、分层验证、Release Freeze 和人工授权边界。
 - Depends on: `T3`
 - Allowed paths: `docs/architecture/current/**`
@@ -82,7 +82,7 @@ source: "repo-harness-controller-v8"
 
 ### T5 — 降级旧代际文档并统一入口
 
-- Status: `planned`
+- Status: `done`
 - Objective: 为旧 Controller、Local Bridge、V7、V8 及相关代际文档增加统一 Historical Design 标识和当前架构链接，删除相互冲突的权威声明。
 - Depends on: `T4`
 - Allowed paths: `docs/repo-harness-chatgpt-controller.md`, `docs/repo-harness-local-execution-bridge.md`, `docs/repo-harness-execution-closure-v5.md`, `docs/repo-harness-direct-change-v6.md`, `docs/repo-harness-execution-first-v7.md`, `docs/repo-harness-chatgpt-bridge-v8.md`, `docs/repo-harness-v8-verification.md`, `docs/architecture/index.md`
@@ -91,7 +91,7 @@ source: "repo-harness-controller-v8"
 
 ### T6 — 增加架构文档一致性门禁
 
-- Status: `planned`
+- Status: `done`
 - Objective: 扩展 architecture sync 检查与测试，校验 current 文档集合、Runtime Authority 声明、历史文档标识和关键架构不变量关键词。
 - Depends on: `T5`
 - Allowed paths: `scripts/check-architecture-sync.sh`, `tests/architecture-sync.test.ts`, `docs/architecture/current/**`, `docs/architecture/index.md`
@@ -100,12 +100,22 @@ source: "repo-harness-controller-v8"
 
 ### T7 — 执行文档治理终审与基线冻结
 
-- Status: `planned`
+- Status: `done`
 - Objective: 审查当前架构文档内部一致性、链接、术语和与现有实现的事实区分，生成后续实现需求的收敛清单。
 - Depends on: `T6`
 - Allowed paths: `docs/architecture/current/**`, `docs/architecture/index.md`, `tasks/reports/**`
 - Checks: `package:check:architecture-sync`, `package:check:type`
 - Execution hint: selected at runtime
+
+### T8 — 合并并删除旧版本架构文档
+
+- Status: `cancelled`
+- Objective: 将 V4-V8、旧 Controller、Local Bridge 的设计与验证文档浓缩为一份架构演进历史，删除旧版本文档和文件清单，并更新 README、发布文件列表、MCP 文档白名单及当前架构治理规则。
+- Depends on: `T5`
+- Allowed paths: `docs/architecture/history.md`, `docs/architecture/index.md`, `docs/architecture/current/README.md`, `docs/architecture/current/governance.md`, `docs/architecture/current/architecture-invariants.md`, `docs/architecture/current/migration-roadmap.md`, `docs/repo-harness-progress-ledger-v4.md`, `docs/repo-harness-v4-verification.md`, `docs/repo-harness-v4-file-manifest.sha256`, `docs/repo-harness-execution-closure-v5.md`, `docs/repo-harness-v5-verification.md`, `docs/repo-harness-v5-file-manifest.sha256`, `docs/repo-harness-direct-change-v6.md`, `docs/repo-harness-v6-verification.md`, `docs/repo-harness-v6-file-manifest.sha256`, `docs/repo-harness-execution-first-v7.md`, `docs/repo-harness-chatgpt-bridge-v8.md`, `docs/repo-harness-v8-verification.md`, `docs/repo-harness-v8-file-manifest.sha256`, `docs/repo-harness-chatgpt-controller.md`, `docs/repo-harness-local-execution-bridge.md`, `README.md`, `README.zh-CN.md`, `package.json`, `src/cli/mcp/tools.ts`
+- Checks: `package:check:type`
+- Execution hint: selected at runtime
+- Resolution: 保留并标记历史设计文档，不做破坏性删除；这符合当前架构治理规则和“保持原有功能、不能大幅缩减”的交付要求。
 
 ## Related Artifacts
 

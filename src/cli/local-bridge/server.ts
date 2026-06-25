@@ -51,6 +51,7 @@ import {
 } from "../github/plugin";
 import {
   cancelLocalBridgeJob,
+  dispatchLocalBridgeJob,
   executeLocalBridgeJob,
   getLocalBridgeJob,
   getLocalBridgeJobEvents,
@@ -81,6 +82,11 @@ import { getMcpPolicy } from "../mcp/policy";
 import { runtimePolicy } from "../mcp/multi-repository";
 import { controllerExpectedToolNames } from "../mcp/tools";
 import { loadMcpLocalConfig, loadMcpRuntimeState } from "../mcp/auth";
+import { loadRepositoryRegistry } from "../repositories/registry";
+import { resolveControllerHome } from "../repositories/controller-home";
+import { readControllerDaemonStatus } from "../../runtime/control-plane/daemon-client";
+import { listExecutionJobs } from "../../runtime/execution/jobs/store";
+import { readRepositoryProjection } from "../../runtime/projections/materialized-view";
 
 export interface LocalBridgeServerOptions {
   repoRoot: string;
@@ -162,7 +168,7 @@ function errorMessage(error: unknown): string {
 function asyncExecute(repoRoot: string, jobId: string): void {
   setTimeout(() => {
     try {
-      executeLocalBridgeJob(repoRoot, jobId);
+      dispatchLocalBridgeJob(repoRoot, jobId);
     } catch (_error) {
       /* persisted by the job executor */
     }
@@ -203,6 +209,33 @@ function controllerStateSignature(repoRoot: string): string {
     projectState,
     edits: edits.map((edit) => [edit.sessionId, edit.status, edit.updatedAt, edit.changedFiles, edit.checksPassed, edit.checksTotal]),
   });
+}
+
+const SNAPSHOT_CACHE_TTL_MS = 750;
+const localSnapshotCache = new Map<string, { createdAt: number; value: ReturnType<typeof buildLocalControllerSnapshot> }>();
+
+function cachedLocalControllerSnapshot(repoRoot: string): ReturnType<typeof buildLocalControllerSnapshot> {
+  const now = Date.now();
+  const cached = localSnapshotCache.get(repoRoot);
+  if (cached && now - cached.createdAt <= SNAPSHOT_CACHE_TTL_MS) return cached.value;
+  const value = buildLocalControllerSnapshot(repoRoot);
+  localSnapshotCache.set(repoRoot, { createdAt: now, value });
+  return value;
+}
+
+function runtimeControllerSnapshot(repoRoot: string) {
+  const controllerHome = resolveControllerHome();
+  const normalizedRoot = repoRoot.replace(/\\/g, '/');
+  const repository = loadRepositoryRegistry(controllerHome).repositories.find((entry) => entry.canonicalRoot.replace(/\\/g, '/') === normalizedRoot);
+  if (!repository) return { registered: false, daemon: readControllerDaemonStatus(controllerHome) };
+  return {
+    registered: true,
+    repoId: repository.repoId,
+    checkoutId: repository.activeCheckoutId,
+    daemon: readControllerDaemonStatus(controllerHome),
+    projection: readRepositoryProjection(controllerHome, repository.repoId),
+    executionJobs: listExecutionJobs(controllerHome, repository.repoId, 30),
+  };
 }
 
 export function buildLocalControllerSnapshot(repoRoot: string) {
@@ -252,6 +285,7 @@ export function buildLocalControllerSnapshot(repoRoot: string) {
           : undefined),
     },
     timeoutPolicy: localBridgeTimeoutPolicy(repoRoot),
+    runtime: runtimeControllerSnapshot(repoRoot),
     execution: {
       defaultMode: "direct-edit",
       agentRunner: mcpConfig?.devMode?.agentRunner === true,
@@ -285,6 +319,29 @@ export async function startLocalBridgeServer(
   reconcileLocalBridgeJobs(options.repoRoot);
   const token = options.token ?? randomBytes(32).toString("base64url");
   const app = express();
+  const streamClients = new Set<Response>();
+  let streamSignature = controllerStateSignature(options.repoRoot);
+  let streamIdleTicks = 0;
+  const sendStreamEvent = (response: Response, type: string): void => {
+    response.write(`event: ${type}\n`);
+    response.write(`data: ${JSON.stringify({ at: new Date().toISOString() })}\n\n`);
+  };
+  const streamInterval = setInterval(() => {
+    if (streamClients.size === 0) return;
+    const next = controllerStateSignature(options.repoRoot);
+    if (next !== streamSignature) {
+      streamSignature = next;
+      streamIdleTicks = 0;
+      for (const client of streamClients) sendStreamEvent(client, "refresh");
+      return;
+    }
+    streamIdleTicks += 1;
+    if (streamIdleTicks >= 8) {
+      streamIdleTicks = 0;
+      for (const client of streamClients) sendStreamEvent(client, "heartbeat");
+    }
+  }, 2_000);
+  streamInterval.unref();
   const cookieName = "repo_harness_local_token";
   app.disable("x-powered-by");
   app.use((request, response, next) => {
@@ -352,7 +409,7 @@ export async function startLocalBridgeServer(
 
   app.use("/api", requireToken);
   app.get("/api/snapshot", (_request, response) => {
-    response.json(buildLocalControllerSnapshot(options.repoRoot));
+    response.json(cachedLocalControllerSnapshot(options.repoRoot));
   });
   app.get("/api/stream", (request, response) => {
     response.status(200);
@@ -360,28 +417,9 @@ export async function startLocalBridgeServer(
     response.setHeader("Cache-Control", "no-cache, no-transform");
     response.setHeader("Connection", "keep-alive");
     response.flushHeaders();
-    const send = (type: string) => {
-      response.write(`event: ${type}\n`);
-      response.write(`data: ${JSON.stringify({ at: new Date().toISOString() })}\n\n`);
-    };
-    send("connected");
-    let signature = controllerStateSignature(options.repoRoot);
-    let idleTicks = 0;
-    const interval = setInterval(() => {
-      const next = controllerStateSignature(options.repoRoot);
-      if (next !== signature) {
-        signature = next;
-        idleTicks = 0;
-        send("refresh");
-        return;
-      }
-      idleTicks += 1;
-      if (idleTicks >= 8) {
-        idleTicks = 0;
-        send("heartbeat");
-      }
-    }, 2_000);
-    request.on("close", () => clearInterval(interval));
+    streamClients.add(response);
+    sendStreamEvent(response, "connected");
+    request.on("close", () => streamClients.delete(response));
   });
   app.get("/api/progress", (_request, response) => {
     response.json(getProjectProgress(options.repoRoot));
@@ -940,6 +978,15 @@ export async function startLocalBridgeServer(
   const server = await new Promise<Server>((resolve, reject) => {
     const instance = app.listen(requestedPort, host, () => resolve(instance));
     instance.once("error", reject);
+  });
+  server.keepAliveTimeout = 65_000;
+  server.headersTimeout = 70_000;
+  server.requestTimeout = 120_000;
+  server.on("close", () => {
+    clearInterval(streamInterval);
+    for (const client of streamClients) client.end();
+    streamClients.clear();
+    localSnapshotCache.delete(options.repoRoot);
   });
   const address = server.address();
   const port =

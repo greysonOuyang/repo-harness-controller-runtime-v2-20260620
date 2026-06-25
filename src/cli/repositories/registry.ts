@@ -393,9 +393,21 @@ export function validateRepository(repoId: string, controllerHome?: string): Rep
   const identityMatches = record.canonicalRemote
     ? canonicalRemote === record.canonicalRemote
     : rootExists && canonicalRoot === checkout.canonicalRoot;
+  const githubRemote = parseGitHubRemote(canonicalRemote);
+  const githubRemoteRepository = githubRemote ? `${githubRemote.owner}/${githubRemote.repo}` : undefined;
+  const githubMappingMatches = !record.github || !githubRemoteRepository
+    ? undefined
+    : record.github.owner.toLowerCase() === githubRemote!.owner.toLowerCase() &&
+      record.github.repo.toLowerCase() === githubRemote!.repo.toLowerCase();
   if (!rootExists) errors.push('checkout root does not exist');
   if (rootExists && !gitRepository) errors.push('checkout root is no longer a Git repository');
   if (gitRepository && !identityMatches) errors.push('repository identity does not match the registry record');
+  if (record.canonicalRemote && canonicalRemote && record.canonicalRemote !== canonicalRemote) {
+    warnings.push(`Git origin ${canonicalRemote} differs from registry remote ${record.canonicalRemote}; repoId remains stable until explicitly remapped`);
+  }
+  if (githubMappingMatches === false) {
+    warnings.push(`GitHub plugin mapping ${record.github?.owner}/${record.github?.repo} differs from Git origin ${githubRemoteRepository}; mapping was not changed automatically`);
+  }
   if (!record.enabled) warnings.push('repository is disabled');
   if (record.removedAt) warnings.push('repository was removed and is retained for audit only');
   return {
@@ -407,6 +419,9 @@ export function validateRepository(repoId: string, controllerHome?: string): Rep
     identityMatches,
     canonicalRoot,
     canonicalRemote,
+    registryCanonicalRemote: record.canonicalRemote,
+    githubRemoteRepository,
+    githubMappingMatches,
     errors,
     warnings,
     checkedAt: now(),

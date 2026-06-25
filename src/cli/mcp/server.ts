@@ -11,6 +11,8 @@ import {
   type MultiRepositoryMcpToolContext,
 } from './multi-repository';
 import { callRepositoryTool, repositoryToolDefinitions } from './repository-tools';
+import { callRuntimeTool, runtimeToolDefinitions } from '../../runtime/gateway/mcp/runtime-tools';
+import { injectDurableCommandFields, routeDurableMcpCall } from '../../runtime/gateway/mcp/router';
 
 export type { McpServerOptions } from './multi-repository';
 export { buildMultiRepositoryToolDefinitions, callMultiRepositoryTool } from './multi-repository';
@@ -21,6 +23,10 @@ function isMultiRepositoryContext(ctx: ServerToolContext): ctx is MultiRepositor
   return 'controllerHome' in ctx;
 }
 
+export function createMcpToolContext(
+  opts: McpServerOptions & { profile?: "controller" },
+): MultiRepositoryMcpToolContext;
+export function createMcpToolContext(opts: McpServerOptions): ServerToolContext;
 export function createMcpToolContext(opts: McpServerOptions): ServerToolContext {
   const profile = opts.profile ?? 'controller';
   if (profile !== 'controller') return createLegacyMcpToolContext(opts);
@@ -28,21 +34,24 @@ export function createMcpToolContext(opts: McpServerOptions): ServerToolContext 
   return createMultiRepositoryToolContext({ ...opts, repo });
 }
 
-export function createRepoHarnessMcpServer(opts: McpServerOptions): Server {
-  const ctx = createMcpToolContext(opts);
+export function createRepoHarnessMcpServerFromContext(ctx: ServerToolContext): Server {
   const server = new Server(
     { name: 'repo-harness-mcp', version: '1.4.0' },
     { capabilities: { tools: {} }, instructions: mcpServerInstructions(ctx.policy.profile) },
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: isMultiRepositoryContext(ctx)
-      ? repositoryToolDefinitions.concat(buildMultiRepositoryToolDefinitions(ctx))
+      ? runtimeToolDefinitions.concat(repositoryToolDefinitions, buildMultiRepositoryToolDefinitions(ctx)).map(injectDurableCommandFields)
       : buildMcpToolDefinitions(ctx.policy, { enableChatgptBrowser: ctx.enableChatgptBrowser === true }),
   }));
-  server.setRequestHandler(CallToolRequestSchema, async (request: { params: { name: string; arguments?: unknown } }) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const name = request.params.name;
     const args = (request.params.arguments ?? {}) as Record<string, unknown>;
     if (isMultiRepositoryContext(ctx)) {
+      const runtimeResult = await callRuntimeTool(ctx, name, args);
+      if (runtimeResult) return runtimeResult;
+      const durableResult = await routeDurableMcpCall(ctx, name, args);
+      if (durableResult) return durableResult;
       const repositoryResult = await callRepositoryTool(ctx.controllerHome, name, args);
       if (repositoryResult) return repositoryResult;
       return callMultiRepositoryTool(ctx, name, args);
@@ -50,4 +59,8 @@ export function createRepoHarnessMcpServer(opts: McpServerOptions): Server {
     return callMcpTool(ctx, name, args);
   });
   return server;
+}
+
+export function createRepoHarnessMcpServer(opts: McpServerOptions): Server {
+  return createRepoHarnessMcpServerFromContext(createMcpToolContext(opts));
 }

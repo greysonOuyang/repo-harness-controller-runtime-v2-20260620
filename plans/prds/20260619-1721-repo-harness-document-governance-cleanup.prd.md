@@ -62,4 +62,4 @@ source: "repo-harness-mcp"
 
 ## Handoff Notes
 
-本任务针对 /Users/greyson/DevProjects/repo-harness。当前 keepalive 已恢复，仓库 profile=planner。先修控制面，再处理历史归档；不要一次性删除大量文件。
+本任务针对 /Users/example/DevProjects/repo-harness。当前 keepalive 已恢复，仓库 profile=planner。先修控制面，再处理历史归档；不要一次性删除大量文件。

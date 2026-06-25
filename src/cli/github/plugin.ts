@@ -14,10 +14,12 @@ export interface GitHubPluginConfig {
   schemaVersion: 1;
   enabled: boolean;
   repository?: string;
+  labels?: string[];
   syncMode: "manual" | "checkpoint";
   includeTasks: boolean;
   projectOwner?: string;
   projectNumber?: number;
+  statusField?: string;
 }
 
 export interface GitHubPluginStatus {
@@ -49,8 +51,14 @@ function normalizeGitHubPluginConfig(raw: Partial<GitHubPluginConfig>): GitHubPl
   const repository = typeof raw.repository === "string" && raw.repository.trim()
     ? raw.repository.trim()
     : undefined;
+  const labels = Array.isArray(raw.labels)
+    ? Array.from(new Set(raw.labels.map((label) => String(label).trim()).filter(Boolean)))
+    : undefined;
   const projectOwner = typeof raw.projectOwner === "string" && raw.projectOwner.trim()
     ? raw.projectOwner.trim()
+    : undefined;
+  const statusField = typeof raw.statusField === "string" && raw.statusField.trim()
+    ? raw.statusField.trim()
     : undefined;
   const projectNumber = Number.isInteger(raw.projectNumber) && Number(raw.projectNumber) > 0
     ? Number(raw.projectNumber)
@@ -59,10 +67,12 @@ function normalizeGitHubPluginConfig(raw: Partial<GitHubPluginConfig>): GitHubPl
     schemaVersion: 1,
     enabled: typeof raw.enabled === "boolean" ? raw.enabled : defaultGitHubPluginConfig().enabled,
     repository,
+    labels,
     syncMode: raw.syncMode === "checkpoint" ? "checkpoint" : "manual",
     includeTasks: raw.includeTasks !== false,
     projectOwner,
     projectNumber,
+    statusField,
   };
 }
 
@@ -89,10 +99,12 @@ function configFromRepository(record: RepositoryRecord | undefined): GitHubPlugi
   return normalizeGitHubPluginConfig({
     enabled: github.pluginEnabled ?? true,
     repository: github.repository ?? (github.owner && github.repo ? `${github.owner}/${github.repo}` : undefined),
+    labels: github.labels,
     syncMode: github.syncMode,
     includeTasks: github.includeTasks,
     projectOwner: github.projectOwner,
     projectNumber: github.projectNumber,
+    statusField: github.statusField,
   });
 }
 
@@ -112,9 +124,10 @@ function syncRepositoryGitHubConfig(repoRoot: string, config: GitHubPluginConfig
       owner,
       repo,
       repository: effectiveRepository,
-      labels: current?.labels,
+      labels: config.labels ?? current?.labels,
       projectOwner: config.projectOwner,
       projectNumber: config.projectNumber,
+      statusField: config.statusField,
       pluginEnabled: config.enabled,
       syncMode: config.syncMode,
       includeTasks: config.includeTasks,
@@ -133,10 +146,12 @@ export function loadGitHubPluginConfig(repoRoot: string): GitHubPluginConfig {
       ...registryConfig,
       enabled: legacyConfig.enabled,
       repository: legacyConfig.repository ?? registryConfig.repository,
+      labels: legacyConfig.labels ?? registryConfig.labels,
       syncMode: legacyConfig.syncMode,
       includeTasks: legacyConfig.includeTasks,
       projectOwner: legacyConfig.projectOwner ?? registryConfig.projectOwner,
       projectNumber: legacyConfig.projectNumber ?? registryConfig.projectNumber,
+      statusField: legacyConfig.statusField ?? registryConfig.statusField,
     });
     syncRepositoryGitHubConfig(repoRoot, merged);
     return merged;
@@ -161,9 +176,15 @@ export function saveGitHubPluginConfig(
   const repository = patch.repository === undefined
     ? current.repository
     : patch.repository.trim() || undefined;
+  const labels = patch.labels === undefined
+    ? current.labels
+    : Array.from(new Set(patch.labels.map((label) => label.trim()).filter(Boolean)));
   const projectOwner = patch.projectOwner === undefined
     ? current.projectOwner
     : patch.projectOwner.trim() || undefined;
+  const statusField = patch.statusField === undefined
+    ? current.statusField
+    : patch.statusField.trim() || undefined;
   let projectNumber = patch.projectNumber === undefined ? current.projectNumber : patch.projectNumber ?? undefined;
   if (projectNumber !== undefined) {
     if (!Number.isInteger(projectNumber) || projectNumber < 1) {
@@ -174,12 +195,14 @@ export function saveGitHubPluginConfig(
     schemaVersion: 1,
     enabled: typeof patch.enabled === "boolean" ? patch.enabled : current.enabled,
     repository,
+    labels,
     syncMode: patch.syncMode === "manual" || patch.syncMode === "checkpoint"
       ? patch.syncMode
       : current.syncMode,
     includeTasks: typeof patch.includeTasks === "boolean" ? patch.includeTasks : current.includeTasks,
     projectOwner,
     projectNumber,
+    statusField,
   };
   syncRepositoryGitHubConfig(repoRoot, config);
   const path = join(repoRoot, CONFIG_PATH);
@@ -246,6 +269,7 @@ export function publishIssueWithGitHubPlugin(repoRoot: string, issueId: string):
   const config = requireEnabled(repoRoot);
   const issue = publishIssueToGitHub(repoRoot, issueId, {
     repo: config.repository,
+    labels: config.labels,
     includeTasks: config.includeTasks,
     projectOwner: config.projectOwner,
     projectNumber: config.projectNumber,

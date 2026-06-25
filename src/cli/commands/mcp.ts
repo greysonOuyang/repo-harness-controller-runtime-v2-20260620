@@ -35,6 +35,10 @@ interface McpKeepaliveOptions extends McpServeOptions {
   publicEndpoint?: string;
   checkIntervalMs?: string;
   restartDelayMs?: string;
+  localUi?: boolean;
+  localUiHost?: string;
+  localUiPort?: string;
+  openLocalUi?: boolean;
 }
 
 interface McpRestartOptions {
@@ -116,7 +120,8 @@ async function prepareCodexGoalFromSprint(rawOpts: McpPrepareGoalOptions): Promi
     extra_instructions: rawOpts.extraInstructions,
     overwrite: rawOpts.overwrite === true,
   });
-  const payload = JSON.parse(result.content[0]?.text ?? '{}');
+  const firstContent = result.content[0];
+  const payload = JSON.parse(firstContent?.type === 'text' ? firstContent.text : '{}');
   if (payload.error) {
     throw new Error(`${payload.error.code}: ${payload.error.message}`);
   }
@@ -235,7 +240,7 @@ export function buildMcpCommand(): Command {
           restartDelayMs,
           localUi: rawOpts.localUi !== false,
           localUiHost: rawOpts.localUiHost,
-          localUiPort: parsePort(rawOpts.localUiPort),
+          localUiPort: parsePort(rawOpts.localUiPort ?? '8766'),
           openLocalUi: rawOpts.openLocalUi === true,
         });
       });

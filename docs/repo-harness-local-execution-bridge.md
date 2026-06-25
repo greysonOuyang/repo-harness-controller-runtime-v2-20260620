@@ -1,5 +1,11 @@
 # Local Execution Bridge and Visual Controller
 
+> **Historical Design — Not Runtime Authority**
+>
+> This document records an earlier Local Execution Bridge and visual-controller design and remains available for migration history and audit. It may describe behavior that is still implemented, superseded, or not yet migrated.
+>
+> Current Controller Runtime architecture: [docs/architecture/current/README.md](architecture/current/README.md).
+
 ## Purpose
 
 The Local Execution Bridge keeps ChatGPT in the controller role without making every local development capability a remote MCP action.

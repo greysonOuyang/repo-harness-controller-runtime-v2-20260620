@@ -46,6 +46,14 @@ bun install --frozen-lockfile
 echo "[ci] typecheck"
 bun run check:type
 
+echo "[ci] runtime architecture"
+node scripts/check-runtime-architecture.mjs
+node --loader ./src/runtime/shared/node-ts-loader.mjs scripts/check-mcp-compatibility.ts
+node --loader ./src/runtime/shared/node-ts-loader.mjs scripts/smoke-runtime-recovery.ts
+node --loader ./src/runtime/shared/node-ts-loader.mjs scripts/smoke-schedule-engine.ts
+node --loader ./src/runtime/shared/node-ts-loader.mjs scripts/smoke-runtime-control-plane.ts
+node --loader ./src/runtime/shared/node-ts-loader.mjs scripts/smoke-mcp-http-runtime.ts
+
 echo "[ci] tests"
 run_bun_tests
 

@@ -4,327 +4,150 @@
 
 ## 1. System Definition
 
-repo-harness Controller Runtime is an **Agent Engineering Control Plane** for repository-backed software work.
+repo-harness Controller Runtime is an Agent Engineering Control Plane for one or more local Git repositories. ChatGPT, Local UI, CLI and optional GitHub integrations submit decisions and commands. The runtime persists accepted work, schedules it under repository-owned conflict rules, executes it outside the Gateway process and records evidence for recovery, acceptance and release.
 
-It receives decisions and requests from ChatGPT, a local UI, CLI clients, or optional GitHub integrations; converts accepted work into durable repository-scoped state; schedules deterministic tools or optional Agents; isolates concurrent execution; and records evidence required for review, recovery, and release.
-
-The Controller Runtime does not replace the managed repository's build, test, deployment, or release systems. Those systems remain the final execution authority for product behavior.
-
-## 2. Architectural Thesis
-
-The approved topology is:
+## 2. Implemented Process Topology
 
 ```text
-Clients
-  -> Thin Gateway
-     -> Global Control Plane
-        -> Per-Repository Actor
-           -> Durable Job Queue
-              -> Isolated Worker
-                 -> Workspace / Worktree / External Provider
-                    -> Evidence Plane
-                       -> Projection Plane
+Client
+  -> repo-harness-gateway (MCP HTTP/stdio)
+       auth / schema / repository routing / hot projections / durable acknowledgement
+       |
+       v
+     Controller Home
+       execution job + request index + event ledger
+       |
+       v
+  -> repo-harness-controller-daemon
+       Global Scheduler
+       Per-Repository Actors
+       reconciliation / schedules / portfolio DAG
+       |
+       v
+  -> repo-harness-worker (one bounded Job)
+       command / check / Agent dispatch / integration / release gate
+       |
+       v
+     repository workspace, Worktree, GitHub provider
+       |
+       v
+     Evidence Plane + Materialized Projections
 ```
 
-The design follows six principles:
+The processes communicate through atomic file-backed state. Gateway restart does not cancel accepted Jobs. Worker exit does not take down Gateway or Daemon. Daemon restart reconstructs ownership from Job, Lease and index state.
 
-1. decisions and execution are separate responsibilities;
-2. every accepted long operation becomes durable before it starts;
-3. one repository owns its own ordering and conflict decisions;
-4. workers may fail without taking down the Gateway;
-5. completion is evidence-backed and revision-specific;
-6. observation is lightweight and independent from execution.
+## 3. Thin Gateway
 
-## 3. Current Implementation
+Implemented under:
 
-The current repository already contains important parts of this model:
+- `src/cli/mcp/server.ts`
+- `src/cli/mcp/transports/http.ts`
+- `src/runtime/gateway/mcp/router.ts`
+- `src/runtime/gateway/mcp/runtime-tools.ts`
 
-- MCP HTTP and stdio entry points under `src/cli/mcp/`;
-- multi-repository registry, checkout identity, runtime storage, and locks under `src/cli/repositories/`;
-- Issue, Task, readiness, effective state, verification, governance, and worklog logic under `src/cli/controller/`;
-- persistent Agent Runs and worktree integration under `src/cli/agent-jobs/`;
-- transactional Direct Edit sessions under `src/cli/editing/`;
-- Local Bridge Jobs and localhost UI under `src/cli/local-bridge/`;
-- persisted checks, artifacts, logs, and runtime bindings under Controller Home and `.ai/harness/` compatibility links.
+The Gateway performs authentication, schema validation, repository selection, compact reads and Job admission. Mutating or potentially long legacy tools are converted to `ExecutionJob` records and acknowledged immediately. It does not start an Agent or wait for a full check in the HTTP request stack.
 
-Current implementation also has architectural gaps:
+Bounded direct reads include health, Controller context, Job/Run status and bounded logs. Overload is rejected with explicit 429/503 responses instead of unbounded accumulation.
 
-- MCP request handling and some long-running operations still share one Node process and call stack;
-- repository-scoped locks may cover more work than the short state mutation they protect;
-- some operation classes are only partially represented as durable Local Jobs;
-- in-memory maps still participate in shared-check and queue behavior;
-- a logical Per-Repository Actor is not yet an explicit runtime component;
-- schedules and bounded occurrences are not yet first-class entities;
-- Gateway, Controller Daemon, and Worker are not fully separated processes.
+## 4. Global Control Plane
 
-These gaps are migration work, not permission to ignore the target boundaries below.
+Implemented under `src/runtime/control-plane/`.
 
-## 4. Target Architecture
+The Controller Daemon owns:
 
-### 4.1 Thin Gateway
+- fair cross-repository dispatch;
+- global Worker and Agent quotas;
+- provider-specific quotas;
+- Heavy Check limits;
+- host free-memory and CPU-load admission;
+- Schedule ticks;
+- Portfolio DAG progress;
+- orphan/deadline reconciliation.
 
-The Thin Gateway owns:
+Fairness state is persisted, so restart does not permanently reset repository aging.
 
-- HTTP/MCP transport;
-- authentication and authorization context;
-- schema validation;
-- repository resolution;
-- compact read-model queries;
-- durable command acceptance;
-- immediate acknowledgement with a Job or entity identifier.
+## 5. Per-Repository Actor
 
-The Thin Gateway MUST NOT own:
+Each repository is represented by one logical `RepoActor`. Actor decisions are serialized by a repository-specific mailbox lock whose critical section contains only state reads, Claim decisions and state transitions.
 
-- Agent process lifetime;
-- command or check execution;
-- long repository scans;
-- worktree creation or integration;
-- release decisions;
-- retry loops;
-- mutable in-memory state required for recovery.
+The Actor owns:
 
-A write or execution request should normally return:
+- dependency readiness;
+- repository-local priority and aging;
+- Workspace/Worktree placement;
+- Claim acquisition;
+- Lease and fencing assignment;
+- waiting-state classification;
+- release barriers.
 
-```json
-{
-  "accepted": true,
-  "jobId": "JOB-...",
-  "status": "queued",
-  "next": "get_job"
-}
-```
+Long work runs after the Actor releases its short transaction lock.
 
-### 4.2 Global Control Plane
+## 6. Execution Plane
 
-The Global Control Plane owns:
+`ExecutionJob` is the common asynchronous protocol for:
 
-- the repository registry;
-- global worker and Agent quotas;
-- fairness across repositories;
-- cross-repository Portfolio Workflows;
-- global schedules and wake-up delivery;
-- system-wide health and capacity projections.
-
-It MUST NOT directly mutate repository-local Issue, Task, Job, Run, Edit Session, integration, or release state. It sends repository-scoped commands to the owning Repo Actor.
-
-### 4.3 Per-Repository Actor
-
-Each enabled repository has one logical Repo Actor.
-
-The Repo Actor owns repository-local decisions for:
-
-- Issue and Task transitions;
-- Task dependency resolution;
-- request deduplication;
-- resource claims and execution leases;
-- Workspace and Worktree placement;
-- Heavy Check queues;
-- Integration queues;
-- Release Freeze;
-- orphan and stale reconciliation;
-- repository-local scheduling priorities.
-
-The Actor is a single logical owner, not necessarily a permanent operating-system thread. Its commands MUST be serialized through one mailbox or equivalent durable ordering mechanism.
-
-Separate repositories have separate Actors. A blocked repository MUST NOT block unrelated repository Actors.
-
-### 4.4 Workflow Plane
-
-The Workflow Plane owns durable intent:
-
-- Issues;
-- Tasks and dependencies;
-- acceptance criteria;
-- Schedules;
-- Occurrences;
-- Portfolio Workflow nodes;
-- human review requirements.
-
-It does not own worker PIDs, logs, command output, or transient process state.
-
-### 4.5 Durable Execution Plane
-
-The Durable Execution Plane owns asynchronous operation state:
-
-- Jobs;
-- Agent Runs;
-- Check executions;
+- MCP operations;
+- Agent dispatch;
+- checks;
+- Edit verification;
 - repository commands;
-- edit verification;
-- integration operations;
-- release-gate executions.
+- integration;
+- release gates;
+- reconciliation;
+- Schedule occurrences.
 
-Accepted long work MUST be persisted before a Worker starts. A Worker MUST be able to finish, fail, time out, or become orphaned without relying on the original client connection.
+Every Job has `requestId`, `semanticKey`, repository identity, deadline, attempts, Claims, Lease references and evidence IDs. Repeated request IDs return the same Job unless the semantic key differs, in which case admission fails explicitly.
 
-### 4.6 Workspace Plane
+Worker processes heartbeat the Job and renew Leases. Fenced writes reject stale ownership. Result bodies are bounded; oversized results become addressable Artifacts.
 
-The Workspace Plane owns deterministic repository placement and mutation resources:
+## 7. Resource Plane
 
-- active checkout identity;
-- Workspace single-writer claim;
-- Worktree allocation;
-- Git index and ref claims;
-- patch integration;
-- cleanup and preservation rules.
-
-It does not decide business acceptance. It reports deterministic outcomes and evidence.
-
-### 4.7 Evidence Plane
-
-The Evidence Plane owns immutable or append-only execution evidence:
-
-- localized diffs;
-- revision hashes;
-- check results;
-- logs and output tails;
-- command results;
-- integration records;
-- verification decisions;
-- release manifests;
-- worklog events.
-
-Evidence is addressable by stable identifiers and MUST be bounded when returned through MCP.
-
-### 4.8 Projection Plane
-
-The Projection Plane owns compact read models:
-
-- active Job indexes;
-- request-id indexes;
-- Task-to-Run indexes;
-- repository summaries;
-- project boards;
-- current focus;
-- attention items;
-- recent event tails;
-- UI and MCP snapshots.
-
-A projection may be rebuilt from durable state. It MUST NOT become the sole authority for a lifecycle transition.
-
-## 5. Process Topology
-
-### Current Implementation
-
-The MCP server, Controller logic, Local Bridge, checks, and parts of execution can share a Node process. Local Agent workers use child processes, and GitHub execution uses external provider sessions.
-
-### Target Architecture
-
-The minimum process separation is:
+Stable resource keys include:
 
 ```text
-repo-harness-gateway
-repo-harness-controller-daemon
-repo-harness-worker [0..N]
+repo-state
+repo-content:*
+workspace:<checkoutId>
+worktree:<identity>
+path:<glob>
+git-refs:<repoId>
+heavy-check:<repoId>
+integration:<repoId>
+remote:<repoId>
+release:<repoId>
 ```
 
-#### Gateway process
+Unknown write scope becomes `repo-content:*`. Workspace writes are single-writer. A second automatically placed Agent may move to a unique Worktree Claim. Worktree implementation can run concurrently, but Integration and Git-ref mutation are exclusive.
 
-- serves MCP/HTTP;
-- reads compact projections;
-- accepts commands;
-- remains responsive during heavy work.
+## 8. Schedule and Portfolio Planes
 
-#### Controller daemon
+A Schedule produces one idempotent Occurrence per normalized time window. Occurrences are bounded and indexed. Shadow Mode records the decision without mutation. Budgets, cooldowns, maximum active occurrences and failure circuit breaking are persisted.
 
-- owns global scheduling and Repo Actors;
-- persists Job and Lease decisions;
-- performs reconciliation;
-- delivers Schedule Occurrences;
-- does not execute arbitrary long commands itself.
+A Portfolio Workflow is a cross-repository DAG. Dependencies are explicit. Failure policy is deterministic stop or Saga compensation. External side effects are blocked from unattended workflows.
 
-#### Worker processes
+## 9. Evidence and Projection Planes
 
-- execute Agent sessions, checks, commands, integration, or release gates;
-- stream bounded events to durable storage;
-- heartbeat their leases;
-- can be terminated or restarted independently.
+Evidence contains exact revision, environment fingerprint, outcome, Job identity and artifacts. Event ledgers are append-only. Large output is not embedded in hot status responses.
 
-### Migration Rule
+Materialized projections summarize active Jobs, queue depth, workers, Leases, release freeze and human-attention states. HTTP readiness and Local UI read these projections rather than scanning history.
 
-Until the processes are fully separated:
+## 10. Release Plane
 
-- long operations MUST still be Job-backed;
-- synchronous child-process APIs MUST NOT be used in the MCP request path;
-- repository locks MUST be released after the state transaction, not after the long operation;
-- status reads MUST avoid scanning or refreshing full history;
-- a failed request connection MUST NOT be treated as cancellation of accepted work.
+A Release Gate is a durable Job with an exclusive repository-wide release Claim. It checks:
 
-## 6. Command Flow
+- current Git revision and clean Workspace;
+- active Jobs, Runs and Local compatibility Jobs;
+- pending Worktree integration;
+- non-final Edit Sessions;
+- other Leases;
+- active-Issue Task completion;
+- exact-revision verification evidence;
+- repository/Git/GitHub identity consistency;
+- Controller Daemon readiness;
+- package metadata.
 
-A normal write or execution command follows:
+The successful result is a release-ready manifest. Push, merge, publish and deployment remain separate, explicitly authorized operations.
 
-```text
-Client request
-  -> Gateway validates identity and schema
-  -> resolve repoId + checkoutId
-  -> build idempotency key
-  -> Repo Actor validates intent and resource policy
-  -> persist Job and command event atomically
-  -> Gateway returns accepted Job ID
-  -> Scheduler assigns Worker
-  -> Worker acquires Lease
-  -> Worker executes and emits heartbeats/events
-  -> terminal outcome persisted
-  -> reconciliation updates linked Task/Run/Occurrence
-  -> Projection Plane updates compact views
-```
+## 11. Compatibility Layer
 
-The client may disconnect after acknowledgement. The Job remains authoritative.
-
-## 7. Query Flow
-
-A normal read follows:
-
-```text
-Client query
-  -> Gateway validates and resolves repository
-  -> read bounded projection or one entity by ID
-  -> optionally reconcile only that active entity
-  -> return compact response
-```
-
-Read paths MUST NOT:
-
-- await heavy checks;
-- scan all historical Jobs or Runs;
-- load complete logs by default;
-- refresh every entity to answer a recent-list query;
-- acquire a long-lived repository write lock.
-
-Detailed evidence is fetched through explicit entity or artifact tools with limits such as `maxBytes`, `limit`, or event cursor.
-
-## 8. Repository Boundary
-
-The stable repository boundary is `repoId`. A checkout is identified separately by `checkoutId`.
-
-Repository-owned runtime state is stored under Controller Home, with repository-local `.ai/harness/` paths retained as compatibility bindings where required.
-
-A repository remote URL may change without changing the meaning of existing Issue, Task, Job, Run, or Edit Session records. Remote mapping changes require diagnosis and explicit migration; they MUST NOT silently rebind durable entities to a new `repoId`.
-
-## 9. Safety Boundary
-
-The Controller Runtime may automate local, reversible engineering work. It MUST retain explicit authorization for destructive or externally visible actions, including:
-
-- force push;
-- history rewrite;
-- destructive database operations;
-- remote branch deletion with unique work;
-- merge;
-- package publication;
-- production deployment;
-- externally visible Issue closure where policy requires review.
-
-Risk metadata controls verification depth and execution policy. It is not a reason to create ceremony for ordinary local work.
-
-## 10. Non-Goals
-
-The target architecture does not require:
-
-- a centralized database before file-backed state proves insufficient;
-- distributed transactions across repositories;
-- one permanent process per repository;
-- an Agent for deterministic integration or verification bookkeeping;
-- multiple competing candidate implementations by default;
-- automatic approval of architecture, production release, or destructive work.
-
-The desired system is durable and observable, not maximally elaborate.
+`src/cli/mcp/tools.ts` remains as a stable export facade; the preserved implementation is isolated in `src/cli/mcp/legacy-tool-service.ts`. Local Jobs and Agent Run records remain readable and operational for compatibility. In Controller mode, long compatibility implementations are invoked only by isolated Workers. The compatibility layer is not the scheduling owner.

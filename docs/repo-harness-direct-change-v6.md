@@ -1,5 +1,11 @@
 # repo-harness V6 Direct Change First
 
+> **Historical Design — Not Runtime Authority**
+>
+> This document records the V6 direct-change-first design and remains available for migration history and audit. It may describe behavior that is still implemented, superseded, or not yet migrated.
+>
+> Current Controller Runtime architecture: [docs/architecture/current/README.md](architecture/current/README.md).
+
 V6 changes the default Controller behavior for known, bounded work. A small documentation, configuration, or code change should produce an actual repository patch, check evidence, and a final result without first creating an Issue.
 
 Local files remain authoritative. GitHub remains an optional collaboration plugin.

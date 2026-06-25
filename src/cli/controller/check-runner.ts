@@ -116,6 +116,8 @@ export interface ControllerCheckEvidence {
   executedAt: string;
   revision?: string;
   cacheKey?: string;
+  completedRevision?: string;
+  stale?: boolean;
 }
 
 function artifactSlug(id: string): string {
@@ -217,7 +219,7 @@ function buildCheckCacheKey(check: ControllerCheck, timeoutMs: number, revision:
 function persistCheckEvidence(
   repoRoot: string,
   result: Omit<ControllerCheckResult, 'artifactPath'>,
-  meta: { revision?: string; cacheKey?: string } = {},
+  meta: { revision?: string; cacheKey?: string; completedRevision?: string; stale?: boolean } = {},
 ): string {
   const path = evidencePath(repoRoot, result.check.id);
   mkdirSync(dirname(path), { recursive: true });
@@ -236,6 +238,8 @@ function persistCheckEvidence(
     executedAt: result.executedAt,
     revision: meta.revision,
     cacheKey: meta.cacheKey,
+    completedRevision: meta.completedRevision,
+    stale: meta.stale,
   };
   atomicWriteFileSync(path, `${JSON.stringify(evidence, null, 2)}\n`);
   return relative(repoRoot, path).replace(/\\/g, '/');
@@ -285,34 +289,49 @@ export function runControllerCheck(repoRoot: string, id: string, requestedTimeou
   } finally {
     lease?.release();
   }
+  const completedRevision = currentControllerCheckRevision(repoRoot);
+  const stale = completedRevision !== revision;
   const withoutPath = {
     check,
-    ok: result.ok,
-    status: result.status,
+    ok: result.ok && !stale,
+    status: stale ? 1 : result.status,
     timedOut: result.timedOut,
     stdout: result.stdout,
-    stderr: result.stderr || result.error,
+    stderr: [
+      result.stderr || result.error,
+      stale ? 'repository revision changed while the check was running; evidence is stale and the check must be rerun' : '',
+    ].filter(Boolean).join('\n'),
     command: result.command,
     executedAt: new Date().toISOString(),
   };
   return {
     ...withoutPath,
-    artifactPath: persistCheckEvidence(repoRoot, withoutPath, { revision, cacheKey }),
+    artifactPath: persistCheckEvidence(repoRoot, withoutPath, {
+      revision,
+      completedRevision,
+      stale,
+      cacheKey: stale ? undefined : cacheKey,
+    }),
   };
 }
 
 export interface AsyncControllerCheckOptions {
   requestedTimeoutMs?: number;
   onSpawn?: (pid: number) => void;
+  subscriberId?: string;
 }
 
 interface ActiveAsyncCheck {
   promise: Promise<ControllerCheckResult>;
   pid?: number;
   spawnListeners: Set<(pid: number) => void>;
+  subscriberIds: Set<string>;
+  anonymousSubscribers: number;
+  cancelWhenSpawned: boolean;
 }
 
 const activeAsyncChecks = new Map<string, ActiveAsyncCheck>();
+const activeAsyncCheckSubscriptions = new Map<string, ActiveAsyncCheck>();
 const heavyCheckQueues = new Map<string, Promise<void>>();
 
 export function controllerCheckConcurrencyClass(id: string): 'heavy' | 'light' {
@@ -420,6 +439,32 @@ function signalProcessTree(pid: number | undefined, signal: NodeJS.Signals): voi
   } catch (_error) {
     // The child may have exited between the timeout and the signal.
   }
+}
+
+export interface ControllerCheckSubscriptionRelease {
+  released: boolean;
+  remainingSubscribers: number;
+  terminationRequested: boolean;
+  pid?: number;
+}
+
+export function releaseControllerCheckSubscription(subscriberId: string): ControllerCheckSubscriptionRelease {
+  const active = activeAsyncCheckSubscriptions.get(subscriberId);
+  if (!active) return { released: false, remainingSubscribers: 0, terminationRequested: false };
+  activeAsyncCheckSubscriptions.delete(subscriberId);
+  active.subscriberIds.delete(subscriberId);
+  const remainingSubscribers = active.subscriberIds.size + active.anonymousSubscribers;
+  if (remainingSubscribers > 0) {
+    return { released: true, remainingSubscribers, terminationRequested: false, pid: active.pid };
+  }
+  active.cancelWhenSpawned = true;
+  if (active.pid) signalProcessTree(active.pid, 'SIGTERM');
+  return {
+    released: true,
+    remainingSubscribers: 0,
+    terminationRequested: true,
+    pid: active.pid,
+  };
 }
 
 async function executeControllerCheckAsync(
@@ -531,6 +576,12 @@ export function runControllerCheckAsync(
   const key = `${resolve(repoRoot)}\u0000${id}\u0000${cacheKey}`;
   const existing = activeAsyncChecks.get(key);
   if (existing) {
+    if (options.subscriberId) {
+      existing.subscriberIds.add(options.subscriberId);
+      activeAsyncCheckSubscriptions.set(options.subscriberId, existing);
+    } else {
+      existing.anonymousSubscribers += 1;
+    }
     if (options.onSpawn) {
       if (existing.pid) options.onSpawn(existing.pid);
       else existing.spawnListeners.add(options.onSpawn);
@@ -541,25 +592,62 @@ export function runControllerCheckAsync(
   const active: ActiveAsyncCheck = {
     promise: Promise.resolve(undefined as never),
     spawnListeners: new Set(),
+    subscriberIds: new Set(),
+    anonymousSubscribers: options.subscriberId ? 0 : 1,
+    cancelWhenSpawned: false,
   };
+  if (options.subscriberId) {
+    active.subscriberIds.add(options.subscriberId);
+    activeAsyncCheckSubscriptions.set(options.subscriberId, active);
+  }
   if (options.onSpawn) active.spawnListeners.add(options.onSpawn);
   const notifySpawn = (pid: number): void => {
     active.pid = pid;
+    if (active.cancelWhenSpawned && active.subscriberIds.size === 0 && active.anonymousSubscribers === 0) {
+      signalProcessTree(pid, 'SIGTERM');
+    }
     for (const listener of active.spawnListeners) listener(pid);
     active.spawnListeners.clear();
   };
+  const hasActiveSubscribers = (): boolean => active.subscriberIds.size + active.anonymousSubscribers > 0;
+  const assertExecutionStillRequested = (): void => {
+    if (active.cancelWhenSpawned && !hasActiveSubscribers()) {
+      throw new Error(`check execution canceled before process start: ${id}`);
+    }
+  };
   const execute = async (lease?: HeavyCheckLease) => {
+    assertExecutionStillRequested();
     const result = await executeControllerCheckAsync(repoRoot, check, timeoutMs, (pid) => {
       lease?.setChildPid(pid);
       notifySpawn(pid);
     });
-    const { artifactPath: _artifactPath, ...withoutPath } = result;
-    const artifactPath = persistCheckEvidence(repoRoot, withoutPath, { revision, cacheKey });
-    return { ...result, artifactPath };
+    const completedRevision = currentControllerCheckRevision(repoRoot);
+    const stale = completedRevision !== revision;
+    const finalized = stale
+      ? {
+          ...result,
+          ok: false,
+          status: 1,
+          stderr: [
+            result.stderr,
+            'repository revision changed while the check was running; evidence is stale and the check must be rerun',
+          ].filter(Boolean).join('\n'),
+        }
+      : result;
+    const { artifactPath: _artifactPath, ...withoutPath } = finalized;
+    const artifactPath = persistCheckEvidence(repoRoot, withoutPath, {
+      revision,
+      completedRevision,
+      stale,
+      cacheKey: stale ? undefined : cacheKey,
+    });
+    return { ...finalized, artifactPath };
   };
   const executeHeavy = async (): Promise<ControllerCheckResult> => {
+    assertExecutionStillRequested();
     const lease = await acquireHeavyCheckLock(repoRoot, id);
     try {
+      assertExecutionStillRequested();
       const currentRevision = currentControllerCheckRevision(repoRoot);
       if (currentRevision !== revision) {
         throw new Error(`repository revision changed while heavy check ${id} was queued; resubmit the check`);
@@ -601,6 +689,13 @@ export function runControllerCheckAsync(
   activeAsyncChecks.set(key, active);
   const cleanup = () => {
     if (activeAsyncChecks.get(key) === active) activeAsyncChecks.delete(key);
+    for (const subscriberId of active.subscriberIds) {
+      if (activeAsyncCheckSubscriptions.get(subscriberId) === active) {
+        activeAsyncCheckSubscriptions.delete(subscriberId);
+      }
+    }
+    active.subscriberIds.clear();
+    active.spawnListeners.clear();
   };
   void promise.then(cleanup, cleanup);
   return promise;

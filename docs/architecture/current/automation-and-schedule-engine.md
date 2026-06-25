@@ -49,7 +49,7 @@ updatedAt
 
 ### Trigger Types
 
-Supported target trigger classes:
+Implemented trigger classes:
 
 - fixed interval;
 - cron/calendar expression;
@@ -422,28 +422,18 @@ The purpose is to remove unhelpful automation, not merely prove it is active.
 
 ## 23. Current Implementation
 
-Current workflow supports external Schedule/automation triggers that can call repo-harness, persistent Local Jobs, request IDs for some actions, active Job indexing, retry evidence, checks, and repository-scoped execution.
+The runtime implements first-class `RepositorySchedule`, `ScheduleDecision` and `ScheduleOccurrence` records under `src/runtime/workflow/schedules/`. Supported triggers are interval, manual, five-field UTC cron, one-shot calendar timestamp, condition watch, repository event and dependency checkpoint.
 
-The repository also contains historical loop-engine research and heartbeat concepts, but no unified first-class Schedule/Occurrence runtime model.
+Every due trigger uses a deterministic window or event identity. The Decision is persisted before executable work is admitted. Occurrences are indexed, Shadow Mode defaults on, one Occurrence creates at most one durable Job, and repeated trigger delivery returns the existing Occurrence.
 
-## 24. Migration Gaps
+Budgets, cooldown, maximum active Occurrences, consecutive-failure circuit breaking and exponential backoff are persisted. Dirty Workspaces, release barriers, repository disablement, human-attention state and recent external/infrastructure failures suppress unattended writes. Candidate Findings deduplicate observations and require explicit human promotion before Issue creation.
 
-- Schedule and Occurrence schemas do not yet exist in Controller Runtime;
-- trigger delivery and durable wake-up recovery are external;
-- Candidate Finding is not first-class;
-- budgets and cooldowns are not unified;
-- idempotency coverage varies by operation;
-- cross-repository Schedule occurrence splitting is not implemented;
-- Shadow Mode metrics and graduation gates are not implemented.
+The Controller Daemon ticks timer/condition/dependency triggers and resumes from file-backed state after restart. Repository events and manual triggers enter through the same idempotent path. Worker and Reconciler settlement keep Job, Occurrence and Schedule failure state consistent.
 
-## 25. Migration Rule
+## 24. Safety Boundary
 
-Until Schedule Engine exists, external automations must:
+Schedules may perform bounded repository work but cannot push, merge, publish, deploy, close remote Issues, remove repositories, or run arbitrary repository commands. The policy is checked at creation and again in the Worker.
 
-- use stable `requestId` values per repository and window;
-- perform one bounded iteration per invocation;
-- query existing Jobs/Tasks before creating work;
-- avoid parallel mutation invocations for one repository;
-- respect dirty Workspace and active writer state;
-- stop on release readiness, external blocker, human review, or repeated failure;
-- never rely on chat history as durable loop state.
+## 25. Rollout Rule
+
+New mutation Schedules begin in Shadow Mode until their decisions are reviewed. This is an operational rollout rule, not an implementation gap.

@@ -13,11 +13,13 @@
     "types": ["bun"]
   },
   "include": [
-    "src/core/adoption/**/*.ts",
-    "src/effects/**/*.ts",
-    "src/cli/runtime/**/*.ts",
-    "tests/process-runner.test.ts",
-    "tests/cli/run.test.ts",
-    "tests/cli/adoption-plan.test.ts"
+    "src/**/*.ts",
+    "scripts/**/*.ts",
+    "tests/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules/**",
+    ".ai/**",
+    ".codegraph/**"
   ]
 }

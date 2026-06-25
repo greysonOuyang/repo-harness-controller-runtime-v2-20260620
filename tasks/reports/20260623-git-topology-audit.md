@@ -1,8 +1,8 @@
 # Git Topology Audit Report
 
 - Date: 2026-06-23
-- Repository inspected: `/Users/greyson/DevProjects/repo-harness-controller-runtime`
-- Execution worktree: `/Users/greyson/DevProjects/repo-harness-controller-runtime/.ai/harness/worktrees/iss-20260623-dde2e7-t1-6de59a70`
+- Repository inspected: `/Users/example/DevProjects/repo-harness-controller-runtime`
+- Execution worktree: `/Users/example/DevProjects/repo-harness-controller-runtime/.ai/harness/worktrees/iss-20260623-dde2e7-t1-6de59a70`
 - Scope mode: read-only inspection only
 - Data freshness note: no `git fetch` was run, so remote refs reflect the locally cached state visible in this worktree at inspection time.
 
@@ -25,8 +25,8 @@
 - `git status --short --branch` before report write: `## controller/iss-20260623-dde2e7-t1-6de59a70`
 - Untracked files before report write: none
 - Additional linked worktrees observed:
-  - `/Users/greyson/DevProjects/repo-harness-controller-runtime` on `feature/v8.1-runtime-storage-isolation-ready`
-  - `/Users/greyson/.repo-harness/controller/repositories/repo_123b7cf58b6b17b5cbe46a56/worktrees/iss-20260623-dde2e7-t2-b6bb5653` on `controller/iss-20260623-dde2e7-t2-b6bb5653`
+  - `/Users/example/DevProjects/repo-harness-controller-runtime` on `feature/v8.1-runtime-storage-isolation-ready`
+  - `/Users/example/.repo-harness/controller/repositories/repo_123b7cf58b6b17b5cbe46a56/worktrees/iss-20260623-dde2e7-t2-b6bb5653` on `controller/iss-20260623-dde2e7-t2-b6bb5653`
 
 ### Smallest relevant verification run
 

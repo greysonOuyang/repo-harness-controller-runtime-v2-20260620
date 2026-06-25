@@ -1,5 +1,11 @@
 # ChatGPT Controller Workflow
 
+> **Historical Design — Not Runtime Authority**
+>
+> This document records an earlier ChatGPT Controller workflow and remains available for migration history and audit. It may describe behavior that is still implemented, superseded, or not yet migrated.
+>
+> Current Controller Runtime architecture: [docs/architecture/current/README.md](architecture/current/README.md).
+
 ## Purpose
 
 The `controller` profile makes ChatGPT the coordinator of repository-backed engineering work. It can inspect the current implementation, manage product and implementation documents, create Issues, split work into dependency-aware Tasks, dispatch short local Agent Runs or visible GitHub Copilot cloud sessions, review evidence, and decide whether to accept, retry, block, split, or re-plan work.

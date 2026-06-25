@@ -457,7 +457,7 @@ function spawnDetached(command: string, args: string[], cwd: string, stdoutPath:
 async function waitForMcpHealth(config: ResolvedMcpRestartConfig): Promise<Record<string, unknown>> {
   for (let attempt = 0; attempt < STARTUP_WAIT_ATTEMPTS; attempt += 1) {
     const payload = await jsonHealth(localHealthUrl(config.host, config.port));
-    if (isHealthyMcpSurface(payload, config.profile, config.expectedToolSurface)) {
+    if (payload && isHealthyMcpSurface(payload, config.profile, config.expectedToolSurface)) {
       return payload;
     }
     await sleep(STARTUP_WAIT_INTERVAL_MS);

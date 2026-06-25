@@ -15,13 +15,9 @@ import {
 } from '../repositories/registry';
 import { buildControllerWorkbench } from '../repositories/workbench';
 import { executeLocalBridgeJob, submitLocalBridgeJob } from '../local-bridge/job-store';
-import type { McpToolDefinition } from './tools';
+import type { CallToolResult, McpToolDefinition } from './tools';
 
-export interface RepositoryToolResult {
-  content: Array<{ type: 'text'; text: string }>;
-  structuredContent?: Record<string, unknown>;
-  isError?: boolean;
-}
+export type RepositoryToolResult = CallToolResult;
 
 function definition(
   name: string,

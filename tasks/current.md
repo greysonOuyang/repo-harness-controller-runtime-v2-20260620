@@ -1,33 +1,34 @@
 # Current Status Snapshot
 
-<!-- generated-by: repo-harness execution-first-v7 -->
-<!-- updated_at: 2026-06-22T08:00:00+0900 -->
+<!-- generated-by: controller-runtime-optimization -->
+<!-- updated_at: 2026-06-25T11:07:08Z -->
 <!-- stale_after: 24h -->
 
 > **Status**: Review
-> **Updated At**: 2026-06-22T08:00:00+0900
-> **Source Branch**: local execution-first-v7 refactor
-> **Source Commit**: working-tree
-> **Target Branch**: main
+> **Updated At**: 2026-06-25T11:07:08Z
+> **Source**: portable source-archive optimization
+> **Source Revision**: archive without Git metadata
+> **Target**: preserved Controller Runtime 1.4.0 public surface
 > **Stale After**: 24h
-> **Reason**: execution-first-risk-adaptive-task-local
-> **Derived From**: source, runtime regressions, repository checks, package validation
 
-This snapshot is a read model, not an execution gate. Current focus is informational.
+This snapshot is a read model, not an execution gate.
 
 ## Current Focus
 
-- Controller V7 execution-first refactor is implemented.
-- Task launch is task-local; multiple active Issues and focus do not block independent work.
-- Risk-adaptive completion, ephemeral Quick Agent lifecycle, Run continuation, repository access consistency, bounded snapshots/logs, and full Connector identity drift checks are included.
+- Runtime stability and bounded MCP/Local Bridge resource usage are implemented.
+- Current architecture authority and implementation-status documentation are synchronized.
+- Historical architecture documents, source modules, tests, plans and task history are preserved.
+- Machine-local dependencies, caches, credentials and runtime state are excluded from the delivery archive.
 
-## Validation
+## Validation Completed
 
-- Node/TypeScript runtime regression suite: 39/39 passed.
-- Targeted strict TypeScript core check: passed.
-- Full TypeScript syntax transpilation: passed.
-- Bun is unavailable in the validation environment, so the complete `bun test` and package `bun run check:type` commands remain external validation items.
+- Full strict TypeScript check across `src`, `scripts` and `tests`: passed.
+- Architecture synchronization gate in dependency-independent mode: passed.
+- Runtime smoke validation: stale Revision evidence, shared-check cancellation, repository remote-drift diagnostics and Local Bridge health/snapshot: passed.
+- Shell syntax validation: passed.
+- MCP HTTP startup/health counters and npm package dry-run: passed.
 
-## Next Action
+## Remaining External Validation
 
-- Run the complete Bun suite in an environment with project dependencies installed before publishing a release.
+- Run the complete Bun test suite and release gate in an environment with Bun installed.
+- Validate the public HTTPS tunnel separately; local runtime safeguards reduce Controller-originated failures but cannot eliminate upstream network or tunnel failures.

@@ -1,5 +1,11 @@
 # repo-harness V8 — ChatGPT-Controlled Execution Bridge
 
+> **Historical Design — Not Runtime Authority**
+>
+> This document records the V8 ChatGPT-controlled execution-bridge design and remains available for migration history and audit. It may describe behavior that is still implemented, superseded, or not yet migrated.
+>
+> Current Controller Runtime architecture: [docs/architecture/current/README.md](architecture/current/README.md).
+
 ## Positioning
 
 V8 defines repo-harness as a repository execution bridge for an upstream controller such as ChatGPT.

@@ -328,7 +328,7 @@
               "agent-run",
               "RUN-iss-20260624-6732ee-t5-1782373614135-ecc4401d"
             ],
-            "cwd": "/Users/greyson/DevProjects/repo-harness-controller-runtime/.ai/harness/worktrees/iss-20260624-6732ee-t5-ecc4401d",
+            "cwd": "/Users/example/DevProjects/repo-harness-controller-runtime/.ai/harness/worktrees/iss-20260624-6732ee-t5-ecc4401d",
             "ok": true,
             "exitCode": 0,
             "artifactPath": ".ai/harness/jobs/RUN-iss-20260624-6732ee-t5-1782373614135-ecc4401d/result.json",

@@ -67,7 +67,7 @@ run_ts_script() {
   fi
 
   if command -v node >/dev/null 2>&1; then
-    node --experimental-strip-types "$script_path" "$@"
+    node --loader "$SKILL_ROOT/src/runtime/shared/node-ts-loader.mjs" "$script_path" "$@"
     return $?
   fi
 

@@ -66,6 +66,7 @@ The current set is introduced incrementally under governance Issue `ISS-20260625
 - `automation-and-schedule-engine.md` — bounded occurrences, budgets, backoff, deduplication, and stop conditions;
 - `failure-recovery.md` — process boundaries, orphan handling, reconciliation, and fencing;
 - `verification-and-release-gates.md` — exact-revision evidence, integration gates, release freeze, and human authorization;
+- `implementation-status.md` — verified implementation coverage and explicit migration gaps;
 - `migration-roadmap.md` — evidence-driven implementation convergence order.
 
 Until a listed document is created, the rule must be recorded in an accepted Issue/ADR and must not be inferred from a historical version document.
@@ -100,6 +101,6 @@ The following domain pages describe the earlier repo-local workflow-harness arch
 
 ## Review Backlog
 
-- Migrate accepted Controller Runtime rules from historical V5–V8 documents into `current/` and mark those documents as Historical Design.
-- Add automated checks for required current documents, authority declarations, historical headers, terminology, and internal links.
+- Continue converging P0 runtime behavior with the gaps recorded in `current/implementation-status.md`.
+- Add link validation and exact-revision release-manifest checks to the final release gate.
 - Keep diagrams as projections of the Markdown semantic source; a diagram must not introduce architecture rules absent from `current/`.

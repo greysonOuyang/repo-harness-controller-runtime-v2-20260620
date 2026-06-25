@@ -404,23 +404,19 @@ When a repository enters Release Freeze:
 
 The full release contract is defined in `verification-and-release-gates.md`.
 
-## 20. Current Implementation and Migration
+## 20. Implemented Runtime and Maintenance Rule
 
-### Current Implementation
+The runtime now implements:
 
-The repository already has repository/task/run/worktree lock key types, path-overlap checks, Workspace/Worktree placement, a Heavy Check lock, persistent active Job indexing, and isolated integration.
+- one repository-specific actor mailbox;
+- persisted Claims on every Execution Job;
+- renewable Leases with monotonically increasing fencing tokens;
+- conservative `repo-content:*` scope for unknown writes;
+- explicit waiting states for Workspace, Heavy Check, Integration, release and dependencies;
+- Workspace single-writer semantics and automatic Worktree placement for eligible Agent work;
+- exclusive Integration, Git-ref, remote and release resources;
+- global/per-repository capacity, provider quotas, Heavy Check limits and host-pressure admission;
+- persisted priority aging and repository fairness state;
+- owner-bound Worker heartbeat, Lease renewal, release and terminal writes.
 
-### Migration Gaps
-
-- no explicit Repo Actor mailbox;
-- repository lock can still wrap long tool calls;
-- Claims are inferred rather than persisted as first-class entities;
-- Leases lack a complete fencing-token contract;
-- unknown Task path scope is not consistently treated as repository-wide conflict;
-- waiting reasons are often represented as blockers or errors;
-- Integration Queue is not a distinct durable queue;
-- global and per-repository capacity policy is not unified.
-
-### Migration Rule
-
-New concurrency features must express required resources and may not introduce additional ad-hoc locks outside this model without an ADR.
+New concurrency features must express their resources through this model. Additional ad-hoc long-lived locks require an ADR and may not execute on the Gateway event loop.

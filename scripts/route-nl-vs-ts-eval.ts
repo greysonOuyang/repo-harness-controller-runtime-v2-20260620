@@ -470,7 +470,7 @@ function normalizeDecisions(input: unknown): RouteNlDecision[] {
       : [];
 
   return source
-    .map((entry) => {
+    .map<RouteNlDecision | null>((entry) => {
       if (!entry || typeof entry !== "object") return null;
       const record = entry as Record<string, unknown>;
       const scenarioId = record.scenario_id ?? record.id;
