@@ -197,12 +197,20 @@ function normalizeStoredSession(value: Partial<EditSession> & { sessionId: strin
 }
 
 function changedLineEstimate(before: string, after: string): number {
+  if (before === after) return 0;
   const beforeLines = before.split(/\r?\n/);
   const afterLines = after.split(/\r?\n/);
-  const max = Math.max(beforeLines.length, afterLines.length);
-  let changed = 0;
-  for (let index = 0; index < max; index += 1) if (beforeLines[index] !== afterLines[index]) changed += 1;
-  return changed;
+  let prefix = 0;
+  while (prefix < beforeLines.length && prefix < afterLines.length && beforeLines[prefix] === afterLines[prefix]) prefix += 1;
+  let suffix = 0;
+  while (
+    suffix < beforeLines.length - prefix
+    && suffix < afterLines.length - prefix
+    && beforeLines[beforeLines.length - 1 - suffix] === afterLines[afterLines.length - 1 - suffix]
+  ) suffix += 1;
+  const removed = beforeLines.length - prefix - suffix;
+  const added = afterLines.length - prefix - suffix;
+  return Math.max(removed, added);
 }
 
 function pathAllowed(path: string, allowedPaths: string[]): boolean {
@@ -311,13 +319,17 @@ function baselinePatchItems(repoRoot: string, session: EditSession): PatchItem[]
   });
 }
 
-function persistAggregatePatch(repoRoot: string, session: EditSession): void {
-  const patch = buildLocalizedPatch(repoRoot, session.sessionId, 'aggregate', baselinePatchItems(repoRoot, session));
+function persistAggregatePatchContent(repoRoot: string, session: EditSession, patch: string): void {
   const absoluteDiffPath = diffPath(repoRoot, session.sessionId);
   mkdirSync(dirname(absoluteDiffPath), { recursive: true });
   writeFileSync(absoluteDiffPath, patch, 'utf-8');
   session.diffPath = relative(repoRoot, absoluteDiffPath).replace(/\\/g, '/');
   session.diffSha256 = hash(patch);
+}
+
+function persistAggregatePatch(repoRoot: string, session: EditSession): void {
+  const patch = buildLocalizedPatch(repoRoot, session.sessionId, 'aggregate', baselinePatchItems(repoRoot, session));
+  persistAggregatePatchContent(repoRoot, session, patch);
 }
 
 function checkRecord(result: ControllerCheckResult): EditSessionCheckRecord {
@@ -503,6 +515,7 @@ export function applyEditOperations(repoRoot: string, policy: McpPolicy, session
   if (noChange.length) throw new Error(`edit operation produced no change: ${noChange.join(', ')}`);
 
   const revision = session.currentRevision + 1;
+  const firstRevision = session.operations.length === 0;
   const records: EditSessionOperationRecord[] = [];
   try {
     prepared.forEach((item, index) => {
@@ -561,7 +574,8 @@ export function applyEditOperations(repoRoot: string, policy: McpPolicy, session
   session.verifiedAt = undefined;
   session.checkResults = [];
   session.updatedAt = at;
-  persistAggregatePatch(repoRoot, session);
+  if (firstRevision) persistAggregatePatchContent(repoRoot, session, revisionPatch);
+  else persistAggregatePatch(repoRoot, session);
   writeSession(repoRoot, session);
   tryAppendControllerWorklogEvent(repoRoot, {
     category: 'edit',
@@ -670,6 +684,23 @@ export function rollbackEditSession(repoRoot: string, sessionId: string, input: 
   savepoint?: string;
 } = {}): EditSession {
   const session = getEditSession(repoRoot, sessionId);
+  if (session.status === 'open' && session.operations.length === 0) {
+    const at = now();
+    session.status = 'rolled_back';
+    session.rolledBackAt = at;
+    session.updatedAt = at;
+    writeSession(repoRoot, session);
+    tryAppendControllerWorklogEvent(repoRoot, {
+      category: 'edit',
+      action: 'edit_session_rolled_back',
+      summary: `${session.purpose}: empty session closed`,
+      issueId: session.issueId,
+      taskId: session.taskId,
+      editSessionId: session.sessionId,
+      details: { targetRevision: 0, revertedOperations: 0 },
+    });
+    return session;
+  }
   if (['finalized', 'rolled_back', 'open'].includes(session.status)) {
     throw new Error(`edit session cannot be rolled back from ${session.status}`);
   }
@@ -718,10 +749,11 @@ export function finalizeEditSession(repoRoot: string, sessionId: string, input: 
   note?: string;
 } = {}): EditSession {
   const session = getEditSession(repoRoot, sessionId);
-  if (!['dirty', 'checked', 'check_failed'].includes(session.status)) {
+  const emptyOpenSession = session.status === 'open' && session.operations.length === 0;
+  if (!emptyOpenSession && !['dirty', 'checked', 'check_failed'].includes(session.status)) {
     throw new Error(`edit session cannot be finalized from ${session.status}`);
   }
-  if (session.requestedChecks.length > 0) {
+  if (!emptyOpenSession && session.requestedChecks.length > 0) {
     const allRequestedPassed = session.requestedChecks.every((checkId) => session.checkResults.some((result) => result.checkId === checkId && result.ok));
     if (!allRequestedPassed) throw new Error('configured checks must pass before finalization');
   }

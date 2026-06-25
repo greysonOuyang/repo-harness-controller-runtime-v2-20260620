@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { spawn } from 'child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join, normalize, relative, resolve } from 'path';
 import {
   capProcessOutput,
@@ -8,6 +8,7 @@ import {
   runProcess,
   type ProcessRunResult,
 } from '../../effects/process-runner';
+import { atomicWriteFileSync } from '../installer/shared';
 
 export interface ControllerCheck {
   id: string;
@@ -30,6 +31,7 @@ interface CheckConfig {
 
 const CHECK_CONFIG = '.repo-harness/checks.json';
 const CHECK_EVIDENCE_ROOT = '.ai/harness/checks/controller';
+const HEAVY_CHECK_LOCK = '.ai/harness/controller/heavy-check.lock';
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_TIMEOUT_MS = 30 * 60 * 1000;
 const SAFE_PACKAGE_SCRIPT = /^(test(?::|$)|check(?::|$)|lint(?::|$)|typecheck(?::|$)|format:check$)/;
@@ -124,21 +126,66 @@ function evidencePath(repoRoot: string, id: string): string {
   return join(repoRoot, CHECK_EVIDENCE_ROOT, `latest-${artifactSlug(id)}.json`);
 }
 
-function currentCheckRevision(repoRoot: string): string {
+const CHECK_REVISION_EXCLUDES = [
+  '.ai/harness/jobs/**',
+  '.ai/harness/local-jobs/**',
+  '.ai/harness/checks/controller/**',
+  '.ai/harness/edit-sessions/**',
+  '.ai/harness/worktrees/**',
+  '.ai/harness/controller/**',
+  '.ai/harness/artifacts/**',
+  '.ai/harness/local-bridge/**',
+  '.ai/harness/ephemeral-issues/**',
+];
+
+function checkRevisionPathspecs(): string[] {
+  return ['.', ...CHECK_REVISION_EXCLUDES.map((path) => `:(exclude)${path}`)];
+}
+
+export function currentControllerCheckRevision(repoRoot: string): string {
   const head = runProcess('git', ['rev-parse', 'HEAD'], {
     cwd: repoRoot,
     timeoutMs: 5_000,
     maxOutputBytes: 16 * 1024,
   });
-  const status = runProcess('git', ['status', '--porcelain=v1', '--untracked-files=normal'], {
+  if (!head.ok) {
+    const fallback = createHash('sha256').update('non-git\n');
+    for (const relativePath of ['package.json', CHECK_CONFIG]) {
+      const path = join(repoRoot, relativePath);
+      fallback.update(`${relativePath}\n`);
+      if (existsSync(path)) fallback.update(readFileSync(path));
+    }
+    return fallback.digest('hex').slice(0, 24);
+  }
+
+  const diff = runProcess('git', ['diff', '--no-ext-diff', '--binary', 'HEAD', '--', ...checkRevisionPathspecs()], {
+    cwd: repoRoot,
+    timeoutMs: 15_000,
+    maxOutputBytes: 8 * 1024 * 1024,
+  });
+  const untracked = runProcess('git', ['ls-files', '--others', '--exclude-standard', '-z', '--', ...checkRevisionPathspecs()], {
     cwd: repoRoot,
     timeoutMs: 10_000,
-    maxOutputBytes: 128 * 1024,
+    maxOutputBytes: 2 * 1024 * 1024,
   });
-  return createHash('sha256')
-    .update(`${head.ok ? head.stdout.trim() : 'unknown'}\n${status.ok ? status.stdout : 'unknown'}`)
-    .digest('hex')
-    .slice(0, 24);
+  const revision = createHash('sha256')
+    .update(`${head.stdout.trim()}\n`)
+    .update(diff.ok ? diff.stdout : `diff-error:${diff.error || diff.stderr}`);
+  if (untracked.ok) {
+    const paths = untracked.stdout.split('\0').filter(Boolean).sort();
+    for (const relativePath of paths) {
+      revision.update(`\n${relativePath}\n`);
+      const path = resolve(repoRoot, relativePath);
+      try {
+        revision.update(readFileSync(path));
+      } catch (_error) {
+        revision.update('unreadable');
+      }
+    }
+  } else {
+    revision.update(`\nuntracked-error:${untracked.error || untracked.stderr}`);
+  }
+  return revision.digest('hex').slice(0, 24);
 }
 
 function checkEnvironmentFingerprint(): string {
@@ -190,7 +237,7 @@ function persistCheckEvidence(
     revision: meta.revision,
     cacheKey: meta.cacheKey,
   };
-  writeFileSync(path, `${JSON.stringify(evidence, null, 2)}\n`, 'utf-8');
+  atomicWriteFileSync(path, `${JSON.stringify(evidence, null, 2)}\n`);
   return relative(repoRoot, path).replace(/\\/g, '/');
 }
 
@@ -209,7 +256,7 @@ export function runControllerCheck(repoRoot: string, id: string, requestedTimeou
   const check = listControllerChecks(repoRoot).find((entry) => entry.id === id);
   if (!check) throw new Error(`check not found: ${id}`);
   const timeoutMs = requestedTimeoutMs === undefined ? check.timeoutMs : Math.min(check.timeoutMs, boundedTimeout(requestedTimeoutMs));
-  const revision = currentCheckRevision(repoRoot);
+  const revision = currentControllerCheckRevision(repoRoot);
   const cacheKey = buildCheckCacheKey(check, timeoutMs, revision);
   const cached = readLatestControllerCheckEvidence(repoRoot, id);
   if (cached?.cacheKey === cacheKey) {
@@ -225,11 +272,19 @@ export function runControllerCheck(repoRoot: string, id: string, requestedTimeou
       artifactPath: relative(repoRoot, evidencePath(repoRoot, id)).replace(/\\/g, '/'),
     };
   }
-  const result: ProcessRunResult = runProcess(check.command[0], check.command.slice(1), {
-    cwd: resolve(repoRoot, check.cwd),
-    timeoutMs,
-    maxOutputBytes: 256 * 1024,
-  });
+  const heavy = controllerCheckConcurrencyClass(id) === 'heavy';
+  const lease = heavy ? tryAcquireHeavyCheckLock(repoRoot, id) : undefined;
+  if (heavy && !lease) throw new Error(`heavy check already running for repository: ${id}`);
+  let result: ProcessRunResult;
+  try {
+    result = runProcess(check.command[0], check.command.slice(1), {
+      cwd: resolve(repoRoot, check.cwd),
+      timeoutMs,
+      maxOutputBytes: 256 * 1024,
+    });
+  } finally {
+    lease?.release();
+  }
   const withoutPath = {
     check,
     ok: result.ok,
@@ -251,11 +306,103 @@ export interface AsyncControllerCheckOptions {
   onSpawn?: (pid: number) => void;
 }
 
-const activeAsyncChecks = new Map<string, Promise<ControllerCheckResult>>();
+interface ActiveAsyncCheck {
+  promise: Promise<ControllerCheckResult>;
+  pid?: number;
+  spawnListeners: Set<(pid: number) => void>;
+}
+
+const activeAsyncChecks = new Map<string, ActiveAsyncCheck>();
 const heavyCheckQueues = new Map<string, Promise<void>>();
 
-function isHeavyCheck(id: string): boolean {
-  return /(?:^|:)(?:test|test:coverage|check:ci|check:release|check:release-published)$/.test(id);
+export function controllerCheckConcurrencyClass(id: string): 'heavy' | 'light' {
+  return /(?:^|:)(?:test(?::coverage)?|check:(?:ci|controller-v8|public-export|release(?:-[a-z0-9-]+)?))$/.test(id)
+    ? 'heavy'
+    : 'light';
+}
+
+function isProcessAlive(pid: number | undefined): boolean {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+interface HeavyCheckLockRecord {
+  lockId?: string;
+  pid?: number;
+  controllerPid?: number;
+  childPid?: number;
+  checkId: string;
+  createdAt: string;
+}
+
+interface HeavyCheckLease {
+  setChildPid(pid: number): void;
+  release(): void;
+}
+
+function tryAcquireHeavyCheckLock(repoRoot: string, checkId: string): HeavyCheckLease | undefined {
+  const path = join(repoRoot, HEAVY_CHECK_LOCK);
+  mkdirSync(dirname(path), { recursive: true });
+  const lockId = `${process.pid}:${Date.now()}:${checkId}`;
+  const record: HeavyCheckLockRecord = {
+    lockId,
+    controllerPid: process.pid,
+    checkId,
+    createdAt: new Date().toISOString(),
+  };
+  try {
+    const fd = openSync(path, 'wx', 0o600);
+    try {
+      writeFileSync(fd, `${JSON.stringify(record)}\n`, 'utf-8');
+    } finally {
+      closeSync(fd);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    let existing: HeavyCheckLockRecord | undefined;
+    try {
+      existing = JSON.parse(readFileSync(path, 'utf-8')) as HeavyCheckLockRecord;
+    } catch (_readError) {
+      existing = undefined;
+    }
+    const orphaned = !isProcessAlive(existing?.controllerPid ?? existing?.pid) && !isProcessAlive(existing?.childPid);
+    if (!existing || orphaned) {
+      rmSync(path, { force: true });
+      return tryAcquireHeavyCheckLock(repoRoot, checkId);
+    }
+    return undefined;
+  }
+
+  const ownsLock = (): boolean => {
+    try {
+      return (JSON.parse(readFileSync(path, 'utf-8')) as HeavyCheckLockRecord).lockId === lockId;
+    } catch (_error) {
+      return false;
+    }
+  };
+  return {
+    setChildPid(pid: number): void {
+      if (ownsLock()) atomicWriteFileSync(path, `${JSON.stringify({ ...record, childPid: pid })}\n`);
+    },
+    release(): void {
+      if (ownsLock()) rmSync(path, { force: true });
+    },
+  };
+}
+
+async function acquireHeavyCheckLock(repoRoot: string, checkId: string): Promise<HeavyCheckLease> {
+  const deadline = Date.now() + MAX_TIMEOUT_MS * 2;
+  while (true) {
+    const lease = tryAcquireHeavyCheckLock(repoRoot, checkId);
+    if (lease) return lease;
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for repository heavy-check lock before ${checkId}`);
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+  }
 }
 
 function signalProcessTree(pid: number | undefined, signal: NodeJS.Signals): void {
@@ -365,7 +512,7 @@ export function runControllerCheckAsync(
   const timeoutMs = options.requestedTimeoutMs === undefined
     ? check.timeoutMs
     : Math.min(check.timeoutMs, boundedTimeout(options.requestedTimeoutMs));
-  const revision = currentCheckRevision(repoRoot);
+  const revision = currentControllerCheckRevision(repoRoot);
   const cacheKey = buildCheckCacheKey(check, timeoutMs, revision);
   const cached = readLatestControllerCheckEvidence(repoRoot, id);
   if (cached?.cacheKey === cacheKey) {
@@ -383,27 +530,77 @@ export function runControllerCheckAsync(
   }
   const key = `${resolve(repoRoot)}\u0000${id}\u0000${cacheKey}`;
   const existing = activeAsyncChecks.get(key);
-  if (existing) return existing;
+  if (existing) {
+    if (options.onSpawn) {
+      if (existing.pid) options.onSpawn(existing.pid);
+      else existing.spawnListeners.add(options.onSpawn);
+    }
+    return existing.promise;
+  }
 
-  const execute = async () => {
-    const result = await executeControllerCheckAsync(repoRoot, check, timeoutMs, options.onSpawn);
+  const active: ActiveAsyncCheck = {
+    promise: Promise.resolve(undefined as never),
+    spawnListeners: new Set(),
+  };
+  if (options.onSpawn) active.spawnListeners.add(options.onSpawn);
+  const notifySpawn = (pid: number): void => {
+    active.pid = pid;
+    for (const listener of active.spawnListeners) listener(pid);
+    active.spawnListeners.clear();
+  };
+  const execute = async (lease?: HeavyCheckLease) => {
+    const result = await executeControllerCheckAsync(repoRoot, check, timeoutMs, (pid) => {
+      lease?.setChildPid(pid);
+      notifySpawn(pid);
+    });
     const { artifactPath: _artifactPath, ...withoutPath } = result;
     const artifactPath = persistCheckEvidence(repoRoot, withoutPath, { revision, cacheKey });
     return { ...result, artifactPath };
   };
-  const promise = isHeavyCheck(id)
+  const executeHeavy = async (): Promise<ControllerCheckResult> => {
+    const lease = await acquireHeavyCheckLock(repoRoot, id);
+    try {
+      const currentRevision = currentControllerCheckRevision(repoRoot);
+      if (currentRevision !== revision) {
+        throw new Error(`repository revision changed while heavy check ${id} was queued; resubmit the check`);
+      }
+      const refreshed = readLatestControllerCheckEvidence(repoRoot, id);
+      if (refreshed?.cacheKey === cacheKey) {
+        return {
+          check,
+          ok: refreshed.ok,
+          status: refreshed.status,
+          timedOut: refreshed.timedOut,
+          stdout: refreshed.stdout,
+          stderr: refreshed.stderr,
+          command: refreshed.command,
+          executedAt: refreshed.executedAt,
+          artifactPath: relative(repoRoot, evidencePath(repoRoot, id)).replace(/\\/g, '/'),
+        };
+      }
+      return execute(lease);
+    } finally {
+      lease.release();
+    }
+  };
+  const promise = controllerCheckConcurrencyClass(id) === 'heavy'
     ? (() => {
         const repoKey = resolve(repoRoot);
         const previous = heavyCheckQueues.get(repoKey) ?? Promise.resolve();
-        const queued = previous.catch(() => undefined).then(execute);
-        heavyCheckQueues.set(repoKey, queued.then(() => undefined, () => undefined));
+        const queued = previous.catch(() => undefined).then(executeHeavy);
+        const tail = queued.then(() => undefined, () => undefined);
+        heavyCheckQueues.set(repoKey, tail);
+        void tail.then(() => {
+          if (heavyCheckQueues.get(repoKey) === tail) heavyCheckQueues.delete(repoKey);
+        });
         return queued;
       })()
     : execute();
 
-  activeAsyncChecks.set(key, promise);
+  active.promise = promise;
+  activeAsyncChecks.set(key, active);
   const cleanup = () => {
-    if (activeAsyncChecks.get(key) === promise) activeAsyncChecks.delete(key);
+    if (activeAsyncChecks.get(key) === active) activeAsyncChecks.delete(key);
   };
   void promise.then(cleanup, cleanup);
   return promise;

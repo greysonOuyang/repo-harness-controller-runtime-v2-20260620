@@ -6,6 +6,8 @@ import {
   openSync,
   readFileSync,
   readdirSync,
+  renameSync,
+  rmSync,
   writeFileSync,
   appendFileSync,
 } from "fs";
@@ -39,6 +41,7 @@ import type {
 } from "./types";
 
 const JOB_ROOT = ".ai/harness/jobs";
+const RUN_LAUNCH_LOCK = ".ai/harness/controller/run-launch.lock";
 
 function shortId(): string {
   return randomBytes(4).toString("hex");
@@ -60,7 +63,9 @@ function readJson<T>(path: string): T {
 
 function writeJson(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, "utf-8");
+  const temporaryPath = `${path}.${process.pid}.tmp`;
+  writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf-8");
+  renameSync(temporaryPath, path);
 }
 
 function isAlive(pid: number | undefined): boolean {
@@ -70,6 +75,41 @@ function isAlive(pid: number | undefined): boolean {
     return true;
   } catch (_error) {
     return false;
+  }
+}
+
+function withRunLaunchLock<T>(repoRoot: string, action: () => T): T {
+  const path = join(repoRoot, RUN_LAUNCH_LOCK);
+  mkdirSync(dirname(path), { recursive: true });
+  const acquire = (): number => {
+    try {
+      const fd = openSync(path, "wx", 0o600);
+      writeFileSync(fd, `${JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() })}\n`, "utf-8");
+      return fd;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      let stale = true;
+      try {
+        const lock = readJson<{ pid?: number; createdAt?: string }>(path);
+        const createdAt = Date.parse(lock.createdAt ?? "");
+        stale = !Number.isFinite(createdAt) || !isAlive(lock.pid);
+      } catch (_readError) {
+        stale = true;
+      }
+      if (stale) {
+        rmSync(path, { force: true });
+        return acquire();
+      }
+      throw new Error("another Controller is preparing a local Task Run; retry after its workspace reservation is visible");
+    }
+  };
+
+  const fd = acquire();
+  try {
+    return action();
+  } finally {
+    closeSync(fd);
+    rmSync(path, { force: true });
   }
 }
 
@@ -454,70 +494,52 @@ export function startTaskJob(opts: StartTaskJobOptions): AgentJobMeta {
   if (!readiness.ready) {
     throw new Error(`task-local launch blocked: ${readiness.blockers.map((entry) => `${entry.code}: ${entry.message}`).join('; ')}`);
   }
-  assertNoTaskScopeConflict(opts.repoRoot, opts.issueId, task);
   const agent = opts.agent!;
   const provider = agent === "github-copilot" ? "github" : "local";
-  const runId = `RUN-${sanitize(opts.issueId)}-${sanitize(opts.taskId)}-${Date.now()}-${shortId()}`;
-  let executionMode = resolveExecutionMode(
-    opts.repoRoot,
-    provider,
-    opts.isolate,
-  );
-  const dir = jobDir(opts.repoRoot, runId);
-  mkdirSync(dir, { recursive: true });
-  const isolation =
-    executionMode === "worktree"
+  const prepared = withRunLaunchLock(opts.repoRoot, () => {
+    assertNoTaskScopeConflict(opts.repoRoot, opts.issueId, task);
+    const runId = `RUN-${sanitize(opts.issueId)}-${sanitize(opts.taskId)}-${Date.now()}-${shortId()}`;
+    let executionMode = resolveExecutionMode(opts.repoRoot, provider, opts.isolate);
+    const dir = jobDir(opts.repoRoot, runId);
+    mkdirSync(dir, { recursive: true });
+    const isolation = executionMode === "worktree"
       ? createWorktree(opts.repoRoot, opts.issueId, task, runId)
       : {
           path: opts.repoRoot,
           branch: null,
-          baseRevision:
-            provider === "local"
-              ? runProcess("git", ["rev-parse", "HEAD"], {
-                  cwd: opts.repoRoot,
-                  timeoutMs: 10_000,
-                  maxOutputBytes: 8 * 1024,
-                }).stdout.trim() || null
-              : null,
+          baseRevision: provider === "local"
+            ? runProcess("git", ["rev-parse", "HEAD"], {
+                cwd: opts.repoRoot,
+                timeoutMs: 10_000,
+                maxOutputBytes: 8 * 1024,
+              }).stdout.trim() || null
+            : null,
         };
-  if (executionMode === "worktree" && isolation.path === opts.repoRoot)
-    executionMode = "workspace";
-  const paths = {
-    promptPath: join(dir, "prompt.md"),
-    stdoutPath: join(dir, "stdout.log"),
-    stderrPath: join(dir, "stderr.log"),
-    resultPath: join(dir, "result.json"),
-    eventsPath: join(dir, "events.jsonl"),
-  };
-  const prompt = taskPrompt(
-    issue.title,
-    issue.summary,
-    task,
-    opts.repoRoot,
-    isolation.path,
-    provider,
-    executionMode,
-  );
-  writeFileSync(paths.promptPath, prompt, "utf-8");
-  writeFileSync(paths.stdoutPath, "", "utf-8");
-  writeFileSync(paths.stderrPath, "", "utf-8");
-  writeFileSync(paths.eventsPath, "", "utf-8");
-  const meta = baseMeta(
-    opts,
-    task,
-    runId,
-    paths,
-    isolation,
-    provider,
-    executionMode,
-  );
-  const absoluteMetaPath = metaPath(opts.repoRoot, runId);
-  writeJson(absoluteMetaPath, meta);
-  appendAgentJobEvent(opts.repoRoot, runId, {
-    type: "run_created",
-    message: `${agent} Run created in ${executionMode} mode.`,
-    data: { executionMode, autoIntegrate: executionMode === "worktree" },
+    if (executionMode === "worktree" && isolation.path === opts.repoRoot) executionMode = "workspace";
+    const paths = {
+      promptPath: join(dir, "prompt.md"),
+      stdoutPath: join(dir, "stdout.log"),
+      stderrPath: join(dir, "stderr.log"),
+      resultPath: join(dir, "result.json"),
+      eventsPath: join(dir, "events.jsonl"),
+    };
+    const prompt = taskPrompt(issue.title, issue.summary, task, opts.repoRoot, isolation.path, provider, executionMode);
+    writeFileSync(paths.promptPath, prompt, "utf-8");
+    writeFileSync(paths.stdoutPath, "", "utf-8");
+    writeFileSync(paths.stderrPath, "", "utf-8");
+    writeFileSync(paths.eventsPath, "", "utf-8");
+    const meta = baseMeta(opts, task, runId, paths, isolation, provider, executionMode);
+    const absoluteMetaPath = metaPath(opts.repoRoot, runId);
+    writeJson(absoluteMetaPath, meta);
+    appendAgentJobEvent(opts.repoRoot, runId, {
+      type: "run_created",
+      message: `${agent} Run created in ${executionMode} mode.`,
+      data: { executionMode, autoIntegrate: executionMode === "worktree" },
+    });
+    return { runId, executionMode, dir, paths, prompt, meta, absoluteMetaPath };
   });
+  const { runId, executionMode, dir, paths, prompt, absoluteMetaPath } = prepared;
+  const meta = prepared.meta;
 
   if (provider === "github") {
     try {
@@ -771,9 +793,14 @@ export function getAgentJob(
     }
   } else if (meta.provider === "local") {
     const resultAbsolute = join(repoRoot, meta.resultPath);
+    const autoIntegrationInFlight = meta.status === "running" &&
+      meta.autoIntegrate === true &&
+      meta.executionMode === "worktree" &&
+      isAlive(meta.workerPid);
     if (
       ["queued", "running"].includes(meta.status) &&
-      existsSync(resultAbsolute)
+      existsSync(resultAbsolute) &&
+      !autoIntegrationInFlight
     ) {
       const result = readJson<{
         ok: boolean;

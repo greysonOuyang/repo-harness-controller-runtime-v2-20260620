@@ -40,7 +40,7 @@
       "id": "T1",
       "title": "修复 Controller 重连与启动恢复",
       "objective": "检查 MCP keepalive、runtime state 和 Local Controller 生命周期；修复异常退出、重启后运行状态失真及容易导致 Connector 502/重连的恢复路径。",
-      "status": "ready",
+      "status": "done",
       "dependsOn": [],
       "allowedPaths": [
         "src/cli/mcp/**",
@@ -62,17 +62,57 @@
         "相关恢复测试通过"
       ],
       "risk": "high",
-      "notes": [],
+      "notes": [
+        "复核结论：Controller 在长检查期间仍可响应，但 MCP run_check 仍等待完整检查并触发外层超时。异步调用链尚未完全收口，需继续修改并补充验证。",
+        "开始直接修改：将 MCP run_check 和验证入口改为立即返回 Job，避免等待长检查。",
+        "Direct Edit 会话 EDIT-1782300959107-339ec5b9 已开始。",
+        "Direct Edit 已 finalized，代码已在当前工作区，准备记录验证证据。",
+        "Required verification evidence passed; explicit acceptance remains required.",
+        "确认 MCP run_check 已 Job 化，专项测试和类型检查通过。"
+      ],
       "runIds": [],
       "createdAt": "2026-06-24T08:57:01.690Z",
-      "updatedAt": "2026-06-24T08:57:01.690Z",
-      "repoId": "repo_123b7cf58b6b17b5cbe46a56"
+      "updatedAt": "2026-06-24T11:51:47.015Z",
+      "repoId": "repo_123b7cf58b6b17b5cbe46a56",
+      "verification": {
+        "integratedRevision": "a94f316d24d75363b265aa7dedd6e44abd046c98",
+        "reviewedDiffHash": "3351029c4757087671ffd05b080b1127c54e9354f3c7371cdb4e0f11e62714c2",
+        "reviewer": "ChatGPT",
+        "checkResults": [
+          {
+            "checkId": "package:check:type",
+            "ok": true,
+            "summary": "Passed with persisted evidence: .ai/harness/checks/controller/latest-package-check-type.json"
+          }
+        ],
+        "commandEvidence": [],
+        "acceptanceResults": [
+          {
+            "criterion": "Controller 重启能清理或重新标记失效运行状态",
+            "ok": true,
+            "evidence": "Existing restart reconciliation remains active."
+          },
+          {
+            "criterion": "状态查询不会因超量历史数据频繁失败",
+            "ok": true,
+            "evidence": "run_check returns a Local Job before check completion, so status queries remain available."
+          },
+          {
+            "criterion": "相关恢复测试通过",
+            "ok": true,
+            "evidence": "Focused asynchronous MCP run_check regression passed."
+          }
+        ],
+        "verifiedAt": "2026-06-24T11:49:39.560Z",
+        "autoCompleted": false,
+        "repoId": "repo_123b7cf58b6b17b5cbe46a56"
+      }
     },
     {
       "id": "T2",
       "title": "修复 run-check 超时、僵尸任务与重复执行",
       "objective": "为 Local Bridge run-check 增加可恢复的 deadline/状态收口、孤儿检测、同 Revision 同 Check 去重和仓库级重型检查并发保护。",
-      "status": "planned",
+      "status": "done",
       "dependsOn": [
         "T1"
       ],
@@ -98,17 +138,61 @@
         "专项测试通过"
       ],
       "risk": "high",
-      "notes": [],
+      "notes": [
+        "复核：Local Bridge 非阻塞、同 Revision 去重和重启收口专项测试已通过。但共享 Promise 去重时，新 Job 的 onSpawn 不会执行，可能缺少 workerPid/deadlineAt，需补齐共享执行元数据和对应回归测试。",
+        "开始收敛检查执行和 Agent 结果持久化竞态：补齐共享执行元数据，并使用原子 JSON 写入/安全读取。",
+        "Direct Edit finalized；类型检查、非阻塞去重测试及多订阅者 PID 回传测试通过。",
+        "Required verification evidence passed; explicit acceptance remains required.",
+        "确认超时、重启收口、去重以及共享 PID 元数据均已验证。"
+      ],
       "runIds": [],
       "createdAt": "2026-06-24T08:57:01.690Z",
-      "updatedAt": "2026-06-24T08:57:01.690Z",
-      "repoId": "repo_123b7cf58b6b17b5cbe46a56"
+      "updatedAt": "2026-06-24T12:05:35.648Z",
+      "repoId": "repo_123b7cf58b6b17b5cbe46a56",
+      "verification": {
+        "integratedRevision": "a94f316d24d75363b265aa7dedd6e44abd046c98",
+        "reviewedDiffHash": "a547eaafdd5f67701dd9d5bb05f981250a5fc63e2dd9c03a1f1b1ce24ba0d4b2",
+        "reviewer": "ChatGPT",
+        "checkResults": [
+          {
+            "checkId": "package:check:type",
+            "ok": true,
+            "summary": "Passed with persisted evidence: .ai/harness/checks/controller/latest-package-check-type.json"
+          }
+        ],
+        "commandEvidence": [],
+        "acceptanceResults": [
+          {
+            "criterion": "超时 run-check 进入终态",
+            "ok": true,
+            "evidence": "Existing timeout path and focused Local Bridge test pass."
+          },
+          {
+            "criterion": "重启后僵尸任务被收口",
+            "ok": true,
+            "evidence": "Existing restart reconciliation test remains passing."
+          },
+          {
+            "criterion": "重复检查不会并发启动",
+            "ok": true,
+            "evidence": "Deduplicated calls share one result and every subscriber receives the same worker PID."
+          },
+          {
+            "criterion": "专项测试通过",
+            "ok": true,
+            "evidence": "Non-blocking dedupe and multi-subscriber tests pass."
+          }
+        ],
+        "verifiedAt": "2026-06-24T12:04:38.148Z",
+        "autoCompleted": false,
+        "repoId": "repo_123b7cf58b6b17b5cbe46a56"
+      }
     },
     {
       "id": "T3",
       "title": "优化状态查询与 Connector 响应负载",
       "objective": "让 Local Bridge Job 列表先限量再读取/刷新，活跃与历史状态分离，并压缩 project_snapshot、local_bridge_status 和事件读取的默认数据量。",
-      "status": "planned",
+      "status": "ready",
       "dependsOn": [
         "T2"
       ],
@@ -134,10 +218,13 @@
         "专项测试通过"
       ],
       "risk": "medium",
-      "notes": [],
+      "notes": [
+        "复核：状态快照已加入数量上限和紧凑映射，方向正确；仍缺响应体大小/历史目录读取次数的专项断言，且 MCP controller 测试有 8 项接口契约失败，暂不能验收。",
+        "已定位性能根因：提交检查时全量刷新最近 250 个 Job，并对每个 running check 重复执行 Git revision 计算。开始改为候选过滤和单次 Revision 复用。"
+      ],
       "runIds": [],
       "createdAt": "2026-06-24T08:57:01.690Z",
-      "updatedAt": "2026-06-24T08:57:01.690Z",
+      "updatedAt": "2026-06-24T12:21:55.242Z",
       "repoId": "repo_123b7cf58b6b17b5cbe46a56"
     },
     {
@@ -174,9 +261,185 @@
       "createdAt": "2026-06-24T08:57:01.690Z",
       "updatedAt": "2026-06-24T08:57:01.690Z",
       "repoId": "repo_123b7cf58b6b17b5cbe46a56"
+    },
+    {
+      "id": "T5",
+      "title": "恢复公开包元数据并清理空编辑会话",
+      "objective": "移除误加的 package.json private 标记，保持公开 npm 包契约；关闭或回滚没有任何变更的遗留 Direct Edit 会话，恢复干净且可验证的工作区。",
+      "status": "ready",
+      "dependsOn": [],
+      "allowedPaths": [
+        "package.json",
+        "tests/bootstrap-files.test.ts",
+        ".ai/harness/edit-sessions/**"
+      ],
+      "forbiddenPaths": [
+        "src/**",
+        "tasks/issues/ISS-20260623-DDE2E7*",
+        ".ai/harness/jobs/**",
+        ".ai/harness/worktrees/**"
+      ],
+      "checks": [
+        "package:check:type"
+      ],
+      "acceptanceCriteria": [
+        "package.json 不包含 private:true",
+        "公开包回归断言通过",
+        "空 Direct Edit 会话不再保持 open",
+        "工作区不存在与本任务无关的未提交修改"
+      ],
+      "risk": "low",
+      "notes": [],
+      "runIds": [],
+      "createdAt": "2026-06-24T11:32:25.388Z",
+      "updatedAt": "2026-06-24T11:32:25.388Z",
+      "repoId": "repo_123b7cf58b6b17b5cbe46a56"
+    },
+    {
+      "id": "T6",
+      "title": "稳定仓库身份与远程映射",
+      "objective": "修复 repository refresh 在同一路径 remote 变化时生成重复 repoId 的问题；保持既有 repoId、Issue、Run 和 Edit Session 绑定稳定，并让 Registry remote、实际 Git origin 与 GitHub 插件映射能够明确校验和安全更新。",
+      "status": "planned",
+      "dependsOn": [],
+      "allowedPaths": [
+        "src/cli/repository-registry/**",
+        "src/cli/controller/**",
+        "src/cli/mcp/**",
+        "tests/cli/**",
+        "docs/**"
+      ],
+      "forbiddenPaths": [
+        ".git/**",
+        "tasks/issues/ISS-20260623-DDE2E7*",
+        ".ai/harness/jobs/**",
+        ".ai/harness/worktrees/**"
+      ],
+      "checks": [
+        "package:check:type",
+        "package:check:controller-v8"
+      ],
+      "acceptanceCriteria": [
+        "同一本地 canonicalRoot 刷新不会创建第二个活跃 repoId",
+        "remote 变化不会尝试静默重绑既有 Issue/Run/Edit Session",
+        "Registry、Git origin 与 GitHub 插件映射不一致时返回明确诊断",
+        "重复注册或刷新场景有回归测试",
+        "不改写 Git 历史或远端分支"
+      ],
+      "risk": "high",
+      "notes": [],
+      "runIds": [],
+      "createdAt": "2026-06-24T11:32:45.669Z",
+      "updatedAt": "2026-06-24T11:35:37.767Z",
+      "repoId": "repo_123b7cf58b6b17b5cbe46a56"
+    },
+    {
+      "id": "T7",
+      "title": "执行最终回归并准备 MCP 重启",
+      "objective": "在全部修复集成后执行分层回归，确认 Controller、MCP、Local Bridge、仓库身份和公开包契约均通过；输出可重启状态，重启后再次进行健康检查。",
+      "status": "planned",
+      "dependsOn": [
+        "T4",
+        "T6"
+      ],
+      "allowedPaths": [
+        "tests/**",
+        "scripts/**",
+        "docs/**",
+        "tasks/reports/**"
+      ],
+      "forbiddenPaths": [
+        ".git/**",
+        "tasks/issues/ISS-20260623-DDE2E7*",
+        ".ai/harness/worktrees/**"
+      ],
+      "checks": [
+        "package:check:type",
+        "package:check:controller-v8",
+        "package:check:release-surface"
+      ],
+      "acceptanceCriteria": [
+        "Local Bridge 与 MCP Controller 专项测试通过",
+        "类型检查和 Controller V8 检查通过",
+        "公开发布表面检查通过且 package 不为 private",
+        "没有 running 或 orphaned 的验证 Job",
+        "MCP 重启后 harness_doctor 和健康接口均为 ready/ok"
+      ],
+      "risk": "high",
+      "notes": [],
+      "runIds": [],
+      "createdAt": "2026-06-24T11:33:01.807Z",
+      "updatedAt": "2026-06-24T11:33:01.807Z",
+      "repoId": "repo_123b7cf58b6b17b5cbe46a56"
+    },
+    {
+      "id": "T8",
+      "title": "原子化 Agent 运行结果持久化",
+      "objective": "修复 Agent worker 写入 result/meta JSON 时被 Controller 并发读取导致 Unexpected EOF 的竞态；统一使用原子替换或可恢复读取，并补充高频轮询回归测试。",
+      "status": "ready",
+      "dependsOn": [
+        "T1"
+      ],
+      "allowedPaths": [
+        "src/cli/agent-jobs/**",
+        "tests/cli/local-bridge.test.ts",
+        "tests/cli/mcp-controller.test.ts"
+      ],
+      "forbiddenPaths": [
+        ".git/**",
+        "tasks/issues/ISS-20260623-DDE2E7*",
+        ".ai/harness/jobs/**",
+        ".ai/harness/worktrees/**"
+      ],
+      "checks": [
+        "package:check:type"
+      ],
+      "acceptanceCriteria": [
+        "Controller 不会读取到半写入 JSON",
+        "Agent 运行结果和 meta 文件使用原子持久化",
+        "高频轮询运行状态不再出现 JSON Parse Unexpected EOF",
+        "相关 Local Bridge/MCP 测试通过"
+      ],
+      "risk": "high",
+      "notes": [
+        "开始修复 Agent result/meta JSON 半写入竞态，统一采用临时文件原子替换。"
+      ],
+      "runIds": [],
+      "createdAt": "2026-06-24T11:55:58.232Z",
+      "updatedAt": "2026-06-24T12:06:20.878Z",
+      "repoId": "repo_123b7cf58b6b17b5cbe46a56"
+    },
+    {
+      "id": "T9",
+      "title": "修复并发调度规则",
+      "objective": "修复重型检查并发和本地 Run 工作区选择的跨进程竞态。",
+      "status": "planned",
+      "dependsOn": [
+        "T2"
+      ],
+      "allowedPaths": [
+        "src/cli/controller/check-runner.ts",
+        "src/cli/agent-jobs/**",
+        "tests/cli/**"
+      ],
+      "forbiddenPaths": [],
+      "checks": [
+        "package:check:type",
+        "package:check:controller-v8"
+      ],
+      "acceptanceCriteria": [
+        "重型检查仓库级串行",
+        "轻量检查可并发",
+        "并发本地 Run 不会同时占用主工作区"
+      ],
+      "risk": "high",
+      "notes": [],
+      "runIds": [],
+      "createdAt": "2026-06-24T13:54:27.575Z",
+      "updatedAt": "2026-06-24T13:54:27.575Z",
+      "repoId": "repo_123b7cf58b6b17b5cbe46a56"
     }
   ],
   "createdAt": "2026-06-24T08:57:01.690Z",
-  "updatedAt": "2026-06-24T08:57:01.690Z",
+  "updatedAt": "2026-06-24T13:54:27.575Z",
   "repoId": "repo_123b7cf58b6b17b5cbe46a56"
 }

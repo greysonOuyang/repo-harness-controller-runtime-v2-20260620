@@ -1402,7 +1402,7 @@ export function buildMcpToolDefinitions(
       {
         name: "run_check",
         description:
-          "Run one named focused repository check without accepting arbitrary shell input.",
+          "Start one named focused repository check as a Local Job and return immediately; inspect it with get_local_job.",
         inputSchema: {
           type: "object",
           properties: {
@@ -2952,22 +2952,25 @@ export async function callMcpTool(
             "TOOL_DISABLED",
             "run_check requires the controller profile",
           );
-        const result = await runControllerCheckAsync(
-          ctx.repoRoot,
-          String(args.check_id ?? ""),
-          {
-            requestedTimeoutMs: typeof args.timeout_ms === "number" ? args.timeout_ms : undefined,
+        const job = submitLocalBridgeJob(ctx.repoRoot, {
+          action: "run-check",
+          requestedBy: "mcp:run_check",
+          payload: {
+            checkId: String(args.check_id ?? ""),
+            timeoutMs: typeof args.timeout_ms === "number" ? args.timeout_ms : undefined,
           },
-        );
-        audit(
-          ctx,
-          name,
-          result.ok ? "ok" : "failed",
-          args,
-          undefined,
-          result.ok ? undefined : result.stderr,
-        );
-        return textResult(result);
+        });
+        const result = job.status === "approved"
+          ? executeLocalBridgeJob(ctx.repoRoot, job.jobId)
+          : job;
+        audit(ctx, name, "ok", args);
+        return textResult({
+          job: result,
+          localController:
+            loadMcpRuntimeState(ctx.repoRoot)?.localController?.endpoint ??
+            "http://127.0.0.1:8766/",
+          next: `Inspect Job ${result.jobId} with get_local_job.`,
+        });
       }
       case "list_issues": {
         if (ctx.policy.profile !== "controller")
@@ -3507,7 +3510,7 @@ export async function callMcpTool(
           approveDestructive: args.approve_destructive === true,
         });
         audit(ctx, name, run.status === "failed" ? "failed" : "ok", args, run.github?.url ?? run.promptPath, run.error);
-        return textResult({ readiness, run });
+        return textResult({ ...run, readiness, run });
       }
       case "launch_issue": {
         if (ctx.policy.profile !== "controller") return errorResult("TOOL_DISABLED", "launch_issue requires the controller profile");
@@ -3852,7 +3855,7 @@ export async function callMcpTool(
         const issue = recordTaskVerification(ctx.repoRoot, issueId, taskId, verification);
         const verifiedTask = issue.tasks.find((entry) => entry.id === taskId);
         audit(ctx, name, ["verified", "done"].includes(verifiedTask?.status ?? "") ? "ok" : "failed", args, `tasks/issues/${issue.id}`);
-        return textResult({ policy, issue: projectIssueEffectiveView(ctx.repoRoot, issue) });
+        return textResult(Object.assign(projectIssueEffectiveView(ctx.repoRoot, issue), { policy, issue: projectIssueEffectiveView(ctx.repoRoot, issue) }));
       }
       case "accept_task": {
         if (ctx.policy.profile !== "controller") return errorResult("TOOL_DISABLED", "accept_task requires the controller profile");

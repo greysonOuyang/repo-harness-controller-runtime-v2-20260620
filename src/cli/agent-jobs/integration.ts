@@ -86,9 +86,13 @@ export function integrateAgentJob(
   runId: string,
 ): { session: EditSession; changedPaths: string[] } {
   const run = getAgentJob(repoRoot, runId);
-  if (run.status !== "succeeded")
+  const autoFinalizing = run.status === "running" &&
+    run.autoIntegrate === true &&
+    run.executionMode === "worktree" &&
+    run.progress?.phase === "finalizing";
+  if (run.status !== "succeeded" && !autoFinalizing)
     throw new Error(
-      `only succeeded Runs can be integrated (current: ${run.status})`,
+      `only succeeded or auto-finalizing Runs can be integrated (current: ${run.status})`,
     );
   if (run.provider !== "local")
     throw new Error(
@@ -112,7 +116,10 @@ export function integrateAgentJob(
   const task = issue.tasks.find((entry) => entry.id === run.taskId);
   if (!task) throw new Error(`task not found: ${run.issueId}/${run.taskId}`);
   const state = resolveEffectiveTaskState({ issue, task, runs: readTaskRunEvidence(repoRoot, task) });
-  if (state.terminal || state.inactive || !["review", "verified"].includes(state.effectiveStatus))
+  const taskReady = autoFinalizing
+    ? !state.terminal && !state.inactive && ["review", "verified"].includes(task.status)
+    : !state.terminal && !state.inactive && ["review", "verified"].includes(state.effectiveStatus);
+  if (!taskReady)
     throw new Error(
       `task must be active and in review before integration (declared: ${task.status}, effective: ${state.effectiveStatus})`,
     );

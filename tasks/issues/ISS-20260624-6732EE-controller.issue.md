@@ -2,7 +2,7 @@
 id: "ISS-20260624-6732EE"
 kind: "bug"
 status: "planned"
-updated_at: "2026-06-24T08:57:01.690Z"
+updated_at: "2026-06-24T13:54:27.575Z"
 source: "repo-harness-controller-v8"
 ---
 
@@ -42,7 +42,7 @@ source: "repo-harness-controller-v8"
 
 ### T1 — 修复 Controller 重连与启动恢复
 
-- Status: `ready`
+- Status: `done`
 - Objective: 检查 MCP keepalive、runtime state 和 Local Controller 生命周期；修复异常退出、重启后运行状态失真及容易导致 Connector 502/重连的恢复路径。
 - Depends on: none
 - Allowed paths: `src/cli/mcp/**`, `src/cli/local-bridge/**`, `tests/cli/mcp-*.test.ts`, `tests/cli/local-bridge*.test.ts`
@@ -51,7 +51,7 @@ source: "repo-harness-controller-v8"
 
 ### T2 — 修复 run-check 超时、僵尸任务与重复执行
 
-- Status: `planned`
+- Status: `done`
 - Objective: 为 Local Bridge run-check 增加可恢复的 deadline/状态收口、孤儿检测、同 Revision 同 Check 去重和仓库级重型检查并发保护。
 - Depends on: `T1`
 - Allowed paths: `src/cli/local-bridge/**`, `src/cli/controller/check-runner.ts`, `src/cli/controller/**`, `tests/cli/local-bridge*.test.ts`, `tests/cli/controller*.test.ts`
@@ -60,7 +60,7 @@ source: "repo-harness-controller-v8"
 
 ### T3 — 优化状态查询与 Connector 响应负载
 
-- Status: `planned`
+- Status: `ready`
 - Objective: 让 Local Bridge Job 列表先限量再读取/刷新，活跃与历史状态分离，并压缩 project_snapshot、local_bridge_status 和事件读取的默认数据量。
 - Depends on: `T2`
 - Allowed paths: `src/cli/local-bridge/**`, `src/cli/mcp/tools.ts`, `tests/cli/mcp-controller.test.ts`, `tests/cli/local-bridge*.test.ts`, `docs/**`
@@ -73,6 +73,51 @@ source: "repo-harness-controller-v8"
 - Objective: 收紧工具路由和验证提示，使小中型改动默认 search + Direct Edit + targeted checks，完整 release gate 仅在最终发布阶段执行，并补充文档和回归断言。
 - Depends on: `T3`
 - Allowed paths: `src/cli/mcp/**`, `src/cli/controller/**`, `tests/cli/**`, `docs/**`
+- Checks: `package:check:type`, `package:check:controller-v8`
+- Execution hint: selected at runtime
+
+### T5 — 恢复公开包元数据并清理空编辑会话
+
+- Status: `ready`
+- Objective: 移除误加的 package.json private 标记，保持公开 npm 包契约；关闭或回滚没有任何变更的遗留 Direct Edit 会话，恢复干净且可验证的工作区。
+- Depends on: none
+- Allowed paths: `package.json`, `tests/bootstrap-files.test.ts`, `.ai/harness/edit-sessions/**`
+- Checks: `package:check:type`
+- Execution hint: selected at runtime
+
+### T6 — 稳定仓库身份与远程映射
+
+- Status: `planned`
+- Objective: 修复 repository refresh 在同一路径 remote 变化时生成重复 repoId 的问题；保持既有 repoId、Issue、Run 和 Edit Session 绑定稳定，并让 Registry remote、实际 Git origin 与 GitHub 插件映射能够明确校验和安全更新。
+- Depends on: none
+- Allowed paths: `src/cli/repository-registry/**`, `src/cli/controller/**`, `src/cli/mcp/**`, `tests/cli/**`, `docs/**`
+- Checks: `package:check:type`, `package:check:controller-v8`
+- Execution hint: selected at runtime
+
+### T7 — 执行最终回归并准备 MCP 重启
+
+- Status: `planned`
+- Objective: 在全部修复集成后执行分层回归，确认 Controller、MCP、Local Bridge、仓库身份和公开包契约均通过；输出可重启状态，重启后再次进行健康检查。
+- Depends on: `T4`, `T6`
+- Allowed paths: `tests/**`, `scripts/**`, `docs/**`, `tasks/reports/**`
+- Checks: `package:check:type`, `package:check:controller-v8`, `package:check:release-surface`
+- Execution hint: selected at runtime
+
+### T8 — 原子化 Agent 运行结果持久化
+
+- Status: `ready`
+- Objective: 修复 Agent worker 写入 result/meta JSON 时被 Controller 并发读取导致 Unexpected EOF 的竞态；统一使用原子替换或可恢复读取，并补充高频轮询回归测试。
+- Depends on: `T1`
+- Allowed paths: `src/cli/agent-jobs/**`, `tests/cli/local-bridge.test.ts`, `tests/cli/mcp-controller.test.ts`
+- Checks: `package:check:type`
+- Execution hint: selected at runtime
+
+### T9 — 修复并发调度规则
+
+- Status: `planned`
+- Objective: 修复重型检查并发和本地 Run 工作区选择的跨进程竞态。
+- Depends on: `T2`
+- Allowed paths: `src/cli/controller/check-runner.ts`, `src/cli/agent-jobs/**`, `tests/cli/**`
 - Checks: `package:check:type`, `package:check:controller-v8`
 - Execution hint: selected at runtime
 

@@ -310,6 +310,34 @@ describe("Controller v7 compatibility on the V8 execution bridge", () => {
     })).toThrow("ACTIVE_SCOPE_CONFLICT");
   });
 
+  test("does not steal an old launch lock from a live Controller process", () => {
+    const root = repo();
+    const issue = createIssue(root, {
+      title: "Cross-process launch reservation",
+      tasks: [{
+        title: "Reserved workspace task",
+        objective: "Update one bounded file.",
+        allowedPaths: ["src/example.ts"],
+        risk: "low",
+      }],
+    });
+    const lockDir = join(root, ".ai/harness/controller");
+    mkdirSync(lockDir, { recursive: true });
+    writeFileSync(join(lockDir, "run-launch.lock"), `${JSON.stringify({
+      pid: process.pid,
+      createdAt: "2000-01-01T00:00:00.000Z",
+    })}\n`);
+
+    expect(() => startTaskJob({
+      repoRoot: root,
+      issueId: issue.id,
+      taskId: "T1",
+      agent: "codex",
+      isolate: false,
+      timeoutMs: 10_000,
+    })).toThrow("another Controller is preparing a local Task Run");
+  });
+
   test("queued Runs that never start become terminal unknown evidence with finishedAt", () => {
     const root = repo();
     const issue = createIssue(root, {

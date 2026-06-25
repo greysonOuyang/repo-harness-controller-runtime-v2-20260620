@@ -414,17 +414,50 @@ export function validateRepository(repoId: string, controllerHome?: string): Rep
 }
 
 export function refreshRepository(repoId: string, controllerHome?: string): RepositoryRecord {
-  const record = getRepository(repoId, controllerHome, { includeRemoved: true });
+  const home = ensureControllerHome(controllerHome);
+  const registry = loadRepositoryRegistry(home);
+  const index = registry.repositories.findIndex((candidate) => candidate.repoId === repoId);
+  if (index < 0) throw new Error(`repository not found: ${repoId}`);
+  const record = registry.repositories[index];
   const checkout = activeCheckout(record);
-  return registerRepository({
-    path: checkout.canonicalRoot,
-    controllerHome,
-    displayName: record.displayName,
-    defaultBranch: defaultBranch(checkout.canonicalRoot) ?? record.defaultBranch,
-    repositoryType: record.repositoryType,
-    enabled: record.enabled,
-    stateStorageStrategy: record.stateStorageStrategy,
-  });
+  const canonicalRoot = resolveGitRoot(checkout.canonicalRoot);
+  const rawRemote = git(canonicalRoot, ['config', '--get', 'remote.origin.url']);
+  const canonicalRemote = normalizeRemoteUrl(rawRemote);
+  const checkoutId = stableCheckoutId(repoId, canonicalRoot);
+  const timestamp = now();
+  const refreshedCheckout: RepositoryCheckout = {
+    ...checkout,
+    checkoutId,
+    localRoot: canonicalRoot,
+    canonicalRoot,
+    worktree: Boolean(git(canonicalRoot, ['rev-parse', '--git-common-dir']) && git(canonicalRoot, ['rev-parse', '--git-dir']) !== git(canonicalRoot, ['rev-parse', '--git-common-dir'])),
+    branch: git(canonicalRoot, ['branch', '--show-current']) ?? null,
+    updatedAt: timestamp,
+    lastSeenAt: timestamp,
+  };
+  const refreshed: RepositoryRecord = {
+    ...record,
+    localRoot: canonicalRoot,
+    canonicalRoot,
+    activeCheckoutId: checkoutId,
+    checkouts: [
+      ...record.checkouts.filter((candidate) => candidate.checkoutId !== checkout.checkoutId && candidate.checkoutId !== checkoutId),
+      refreshedCheckout,
+    ],
+    remoteUrl: rawRemote,
+    canonicalRemote,
+    github: defaultGitHubMapping(canonicalRemote, record.github, readLegacyGitHubPluginConfig(canonicalRoot)),
+    defaultBranch: defaultBranch(canonicalRoot) ?? record.defaultBranch,
+    repositoryType: repositoryType(canonicalRoot, rawRemote),
+    updatedAt: timestamp,
+    lastSeenAt: timestamp,
+    configurationPath: join(canonicalRoot, LOCAL_CONFIG),
+  };
+  registry.repositories[index] = refreshed;
+  saveRepositoryRegistry(registry, home);
+  ensureRepositoryControllerLayout(home, repoId);
+  writeLocalIdentity(refreshed);
+  return refreshed;
 }
 
 export function focusRepository(repoId: string | undefined, controllerHome?: string): { repoId?: string; updatedAt: string } {

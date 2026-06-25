@@ -1,17 +1,18 @@
-import { createHash, randomBytes } from "crypto";
+import { randomBytes } from "crypto";
 import {
   appendFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
+  renameSync,
+  rmSync,
   writeFileSync,
 } from "fs";
 import { dirname, join } from "path";
 import { cancelAgentJob, getAgentJob, startTaskJob } from "../agent-jobs/job-manager";
 import { createIssue, getIssue, removeEphemeralIssue } from "../controller/issue-store";
-import { runControllerCheckAsync } from "../controller/check-runner";
-import { runProcess } from "../../effects/process-runner";
+import { currentControllerCheckRevision, runControllerCheckAsync } from "../controller/check-runner";
 import {
   DEFAULT_AGENT_TIMEOUT_MS,
   MAX_AGENT_TIMEOUT_MS,
@@ -103,29 +104,18 @@ function signalWorker(pid: number | undefined, signal: NodeJS.Signals): void {
   }
 }
 
-function currentCheckRevision(repoRoot: string): string {
-  const head = runProcess("git", ["rev-parse", "HEAD"], {
-    cwd: repoRoot,
-    timeoutMs: 5_000,
-    maxOutputBytes: 16 * 1024,
-  });
-  const status = runProcess("git", ["status", "--porcelain=v1", "--untracked-files=normal"], {
-    cwd: repoRoot,
-    timeoutMs: 10_000,
-    maxOutputBytes: 128 * 1024,
-  });
-  return createHash("sha256")
-    .update(`${head.ok ? head.stdout.trim() : "unknown"}\n${status.ok ? status.stdout : "unknown"}`)
-    .digest("hex")
-    .slice(0, 24);
-}
-
 function writeJson(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, {
-    encoding: "utf-8",
-    mode: 0o600,
-  });
+  const temporaryPath = `${path}.${process.pid}.${shortId()}.tmp`;
+  try {
+    writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {
+      encoding: "utf-8",
+      mode: 0o600,
+    });
+    renameSync(temporaryPath, path);
+  } finally {
+    rmSync(temporaryPath, { force: true });
+  }
 }
 
 function readJson<T>(path: string): T {
@@ -268,16 +258,17 @@ export function submitLocalBridgeJob(
   let revision: string | undefined;
   if (request.action === "run-check") {
     const payload = request.payload as RunCheckPayload;
-    revision = currentCheckRevision(repoRoot);
-    const duplicate = readStoredJobs(repoRoot, 250)
-      .map((entry) => refreshLocalBridgeJob(repoRoot, entry))
-      .find((entry) =>
-        entry.action === "run-check" &&
-        ["approved", "running", "succeeded"].includes(entry.status) &&
-        (entry.payload as RunCheckPayload).checkId === payload.checkId &&
-        entry.revision === revision
-      );
-    if (duplicate) return duplicate;
+    revision = currentControllerCheckRevision(repoRoot);
+    const candidate = readStoredJobs(repoRoot, 100).find((entry) =>
+      entry.action === "run-check" &&
+      ["approved", "running", "succeeded"].includes(entry.status) &&
+      (entry.payload as RunCheckPayload).checkId === payload.checkId &&
+      entry.revision === revision
+    );
+    if (candidate) {
+      const duplicate = refreshLocalBridgeJob(repoRoot, candidate, revision);
+      if (["approved", "running", "succeeded"].includes(duplicate.status)) return duplicate;
+    }
   }
   const policyApproval = executionApproval(
     repoRoot,
@@ -328,6 +319,14 @@ function readLocalBridgeJob(repoRoot: string, jobId: string): LocalBridgeJob {
   return readJson<LocalBridgeJob>(path);
 }
 
+function tryReadLocalBridgeJob(repoRoot: string, jobId: string): LocalBridgeJob | undefined {
+  try {
+    return readLocalBridgeJob(repoRoot, jobId);
+  } catch (_error) {
+    return undefined;
+  }
+}
+
 function cleanupEphemeralJob(repoRoot: string, job: LocalBridgeJob): void {
   if (!job.ephemeral || !job.issueId || job.cleanupAt) return;
   try {
@@ -342,15 +341,20 @@ function cleanupEphemeralJob(repoRoot: string, job: LocalBridgeJob): void {
   });
 }
 
-function refreshLocalBridgeJob(repoRoot: string, job: LocalBridgeJob): LocalBridgeJob {
+function refreshLocalBridgeJob(
+  repoRoot: string,
+  job: LocalBridgeJob,
+  checkRevision?: string,
+): LocalBridgeJob {
   if (job.action === "run-check" && job.status === "running") {
     const startedAt = Date.parse(job.startedAt ?? job.updatedAt);
     const configuredTimeout = resolvedJobTimeout(repoRoot, (job.payload as RunCheckPayload).timeoutMs);
-    const deadlineAt = job.deadlineAt ? Date.parse(job.deadlineAt) : startedAt + configuredTimeout + 30_000;
-    const timedOut = Number.isFinite(deadlineAt) && deadlineAt <= Date.now();
+    const deadlineAt = job.deadlineAt ? Date.parse(job.deadlineAt) : Number.NaN;
+    const timedOut = job.deadlineAt !== undefined && Number.isFinite(deadlineAt) && deadlineAt <= Date.now();
     const ownerOrphaned = job.ownerPid !== undefined && job.ownerPid !== process.pid && !isPidAlive(job.ownerPid);
     const legacyOrphaned = job.ownerPid === undefined && Number.isFinite(startedAt) && startedAt + configuredTimeout + 30_000 <= Date.now();
-    const revisionChanged = job.revision !== undefined && job.revision !== currentCheckRevision(repoRoot);
+    const revisionChanged = job.revision !== undefined &&
+      job.revision !== (checkRevision ?? currentControllerCheckRevision(repoRoot));
     if (timedOut || ownerOrphaned || legacyOrphaned || revisionChanged) {
       job.status = timedOut || legacyOrphaned
         ? "timed_out"
@@ -424,8 +428,13 @@ export function getLocalBridgeJob(repoRoot: string, jobId: string): LocalBridgeJ
 
 export function listLocalBridgeJobs(repoRoot: string, limit = 100): LocalBridgeJob[] {
   const boundedLimit = Math.max(1, Math.min(limit, 500));
-  return readStoredJobs(repoRoot, boundedLimit)
-    .map((entry) => refreshLocalBridgeJob(repoRoot, entry))
+  const jobs = readStoredJobs(repoRoot, boundedLimit);
+  const hasActiveCheck = jobs.some((entry) =>
+    entry.action === "run-check" && entry.status === "running"
+  );
+  const checkRevision = hasActiveCheck ? currentControllerCheckRevision(repoRoot) : undefined;
+  return jobs
+    .map((entry) => refreshLocalBridgeJob(repoRoot, entry, checkRevision))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
@@ -435,13 +444,17 @@ export function reconcileLocalBridgeJobs(repoRoot: string): {
   terminalized: number;
 } {
   const jobs = readStoredJobs(repoRoot, 5000);
+  const hasActiveCheck = jobs.some((entry) =>
+    entry.action === "run-check" && entry.status === "running"
+  );
+  const checkRevision = hasActiveCheck ? currentControllerCheckRevision(repoRoot) : undefined;
   let active = 0;
   let terminalized = 0;
   for (const job of jobs) {
     if (!["approved", "running", "dispatched"].includes(job.status)) continue;
     active += 1;
     const previous = job.status;
-    const refreshed = refreshLocalBridgeJob(repoRoot, job);
+    const refreshed = refreshLocalBridgeJob(repoRoot, job, checkRevision);
     if (previous !== refreshed.status && ["succeeded", "failed", "timed_out", "orphaned", "stale", "cancelled"].includes(refreshed.status)) terminalized += 1;
   }
   return { scanned: jobs.length, active, terminalized };
@@ -469,7 +482,7 @@ export function cancelLocalBridgeJob(
   repoRoot: string,
   jobId: string,
 ): LocalBridgeJob {
-  const job = getLocalBridgeJob(repoRoot, jobId);
+  const job = readLocalBridgeJob(repoRoot, jobId);
   if (["succeeded", "failed", "cancelled"].includes(job.status)) return job;
   if (job.runId) {
     try { cancelAgentJob(repoRoot, job.runId); } catch (_error) { /* remote sessions may require provider UI */ }
@@ -617,8 +630,8 @@ async function executeRunCheck(
   jobId: string,
   payload: RunCheckPayload,
 ): Promise<void> {
-  let job = readLocalBridgeJob(repoRoot, jobId);
-  if (job.status !== "running") return;
+  let job = tryReadLocalBridgeJob(repoRoot, jobId);
+  if (!job || job.status !== "running") return;
   job.ownerPid = process.pid;
   saveJob(repoRoot, job);
   try {
@@ -626,8 +639,8 @@ async function executeRunCheck(
     const result = await runControllerCheckAsync(repoRoot, payload.checkId, {
       requestedTimeoutMs: timeoutMs,
       onSpawn: (pid) => {
-        const current = readLocalBridgeJob(repoRoot, jobId);
-        if (current.status !== "running") {
+        const current = tryReadLocalBridgeJob(repoRoot, jobId);
+        if (!current || current.status !== "running") {
           signalWorker(pid, "SIGTERM");
           return;
         }
@@ -637,8 +650,8 @@ async function executeRunCheck(
         saveJob(repoRoot, current);
       },
     });
-    job = readLocalBridgeJob(repoRoot, jobId);
-    if (job.status !== "running") return;
+    job = tryReadLocalBridgeJob(repoRoot, jobId);
+    if (!job || job.status !== "running") return;
     job.status = result.ok ? "succeeded" : "failed";
     job.finishedAt = now();
     job.result = result as unknown as Record<string, unknown>;
@@ -653,8 +666,8 @@ async function executeRunCheck(
     });
     saveJob(repoRoot, job);
   } catch (error) {
-    job = readLocalBridgeJob(repoRoot, jobId);
-    if (job.status !== "running") return;
+    job = tryReadLocalBridgeJob(repoRoot, jobId);
+    if (!job || job.status !== "running") return;
     job.status = "failed";
     job.finishedAt = now();
     job.workerPid = undefined;
@@ -705,6 +718,6 @@ export function executeLocalBridgeJob(
     });
   }
   return job.action === "run-check"
-    ? getLocalBridgeJob(repoRoot, job.jobId)
+    ? readLocalBridgeJob(repoRoot, job.jobId)
     : saveJob(repoRoot, job);
 }

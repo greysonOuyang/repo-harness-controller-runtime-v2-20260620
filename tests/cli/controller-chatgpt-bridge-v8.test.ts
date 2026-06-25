@@ -9,6 +9,7 @@ import {
   createEditSavepoint,
   finalizeEditSession,
   getEditSessionDiff,
+  listEditSessions,
   rollbackEditSession,
 } from "../../src/cli/editing/edit-session";
 import { createIssue, inspectTaskReadiness, projectBoard } from "../../src/cli/controller/issue-store";
@@ -70,6 +71,8 @@ describe("Controller V8 ChatGPT execution bridge", () => {
     }]);
     expect(revision1.status).toBe("dirty");
     expect(revision1.currentRevision).toBe(1);
+    const firstAggregate = getEditSessionDiff(root, session.sessionId);
+    expect(firstAggregate.patch).toBe(readFileSync(join(root, revision1.revisions[0]!.patchPath), "utf-8"));
     createEditSavepoint(root, session.sessionId, "runtime-ready");
 
     const afterRevision1 = readFileSync(path, "utf-8");
@@ -81,6 +84,7 @@ describe("Controller V8 ChatGPT execution bridge", () => {
     }]);
     expect(revision2.currentRevision).toBe(2);
     expect(revision2.revisions).toHaveLength(2);
+    expect(revision2.operations.reduce((sum, operation) => sum + operation.changedLines, 0)).toBe(2);
     const diff = getEditSessionDiff(root, session.sessionId);
     expect(diff.patch).toContain("+export const value = 2;");
     expect(diff.patch).toContain("+export const appended = true;");
@@ -92,6 +96,21 @@ describe("Controller V8 ChatGPT execution bridge", () => {
     expect(readFileSync(path, "utf-8")).toBe(afterRevision1);
     const finalized = finalizeEditSession(root, session.sessionId);
     expect(finalized.status).toBe("finalized");
+    expect(listEditSessions(root)[0]?.changedLines).toBe(1);
+  });
+
+  test("closes zero-change Direct Edit sessions without fabricating revisions or running checks", () => {
+    const { root } = repo();
+    const finalizedSession = beginEditSession(root, { purpose: "No-op finalized", checks: ["package:test"] });
+    const finalized = finalizeEditSession(root, finalizedSession.sessionId);
+    expect(finalized.status).toBe("finalized");
+    expect(finalized.currentRevision).toBe(0);
+    expect(finalized.checkResults).toHaveLength(0);
+
+    const rolledBackSession = beginEditSession(root, { purpose: "No-op rolled back" });
+    const rolledBack = rollbackEditSession(root, rolledBackSession.sessionId);
+    expect(rolledBack.status).toBe("rolled_back");
+    expect(rolledBack.currentRevision).toBe(0);
   });
 
   test("publishes runtime Agent selection and the hierarchical Controller surface", async () => {

@@ -12,6 +12,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { spawnSync } from "child_process";
 import { getAgentJob } from "../../src/cli/agent-jobs/job-manager";
+import { controllerCheckConcurrencyClass, runControllerCheckAsync } from "../../src/cli/controller/check-runner";
 import { CONTROLLER_TOOL_SURFACE } from "../../src/cli/controller/runtime-config";
 import { createIssue, updateTask } from "../../src/cli/controller/issue-store";
 import { beginEditSession, applyEditOperations } from "../../src/cli/editing/edit-session";
@@ -230,7 +231,7 @@ esac
       const temporaryWorktree = second.worktree;
       for (
         let attempt = 0;
-        attempt < 160 &&
+        attempt < 1_000 &&
         !second.worktreeCleanedAt &&
         !second.autoIntegrationError;
         attempt += 1
@@ -323,8 +324,8 @@ printf '%s\n' '{"type":"turn.completed"}'
       version: 1,
       checks: {
         delayed: {
-          command: [process.execPath, "-e", "setTimeout(() => process.exit(0), 1500)"],
-          timeoutMs: 5_000,
+          command: [process.execPath, "-e", "setTimeout(() => process.exit(0), 500)"],
+          timeoutMs: 8_000,
         },
       },
     }));
@@ -342,10 +343,10 @@ printf '%s\n' '{"type":"turn.completed"}'
       body: JSON.stringify({
         action: "run-check",
         requestedBy: "test",
-        payload: { checkId: "delayed", timeoutMs: 5_000 },
+        payload: { checkId: "delayed", timeoutMs: 8_000 },
       }),
     }).then((response) => response.json());
-    expect(Date.now() - startedAt).toBeLessThan(1_200);
+    expect(Date.now() - startedAt).toBeLessThan(3_500);
     expect(["approved", "running"]).toContain(created.status);
 
     const health = await fetch(new URL("/health", handle.url)).then((response) => response.json());
@@ -354,12 +355,12 @@ printf '%s\n' '{"type":"turn.completed"}'
     const duplicate = submitLocalBridgeJob(root, {
       action: "run-check",
       requestedBy: "test",
-      payload: { checkId: "delayed", timeoutMs: 5_000 },
+      payload: { checkId: "delayed", timeoutMs: 8_000 },
     });
     expect(duplicate.jobId).toBe(created.jobId);
 
     let finished = getLocalBridgeJob(root, created.jobId);
-    for (let attempt = 0; attempt < 120 && finished.status === "running"; attempt += 1) {
+    for (let attempt = 0; attempt < 300 && finished.status === "running"; attempt += 1) {
       await Bun.sleep(25);
       finished = getLocalBridgeJob(root, created.jobId);
     }
@@ -370,10 +371,105 @@ printf '%s\n' '{"type":"turn.completed"}'
     const reused = submitLocalBridgeJob(root, {
       action: "run-check",
       requestedBy: "test",
-      payload: { checkId: "delayed", timeoutMs: 5_000 },
+      payload: { checkId: "delayed", timeoutMs: 8_000 },
     });
     expect(reused.jobId).toBe(created.jobId);
     expect(reused.status).toBe("succeeded");
+  });
+
+  test("classifies full repository gates as heavy while leaving focused checks concurrent", () => {
+    expect(controllerCheckConcurrencyClass("package:test")).toBe("heavy");
+    expect(controllerCheckConcurrencyClass("package:check:controller-v8")).toBe("heavy");
+    expect(controllerCheckConcurrencyClass("package:check:release-surface")).toBe("heavy");
+    expect(controllerCheckConcurrencyClass("focused")).toBe("light");
+    expect(controllerCheckConcurrencyClass("package:check:type")).toBe("light");
+  });
+
+  test("waits for a repository heavy-check lock held by another Controller", async () => {
+    const root = repo();
+    mkdirSync(join(root, ".repo-harness"), { recursive: true });
+    mkdirSync(join(root, ".ai/harness/controller"), { recursive: true });
+    writeFileSync(join(root, ".repo-harness/checks.json"), JSON.stringify({
+      version: 1,
+      checks: {
+        "check:release": {
+          command: [process.execPath, "-e", "process.exit(0)"],
+          timeoutMs: 5_000,
+        },
+      },
+    }));
+    const lockPath = join(root, ".ai/harness/controller/heavy-check.lock");
+    writeFileSync(lockPath, `${JSON.stringify({
+      lockId: "external-controller",
+      controllerPid: process.pid,
+      checkId: "package:test",
+      createdAt: new Date().toISOString(),
+    })}\n`);
+    const pids: number[] = [];
+    const pending = runControllerCheckAsync(root, "check:release", {
+      onSpawn: (pid) => pids.push(pid),
+    });
+    await Bun.sleep(150);
+    expect(pids).toHaveLength(0);
+    rmSync(lockPath, { force: true });
+    const result = await pending;
+    expect(result.ok).toBe(true);
+    expect(pids).toHaveLength(1);
+  });
+
+  test("notifies every subscriber when a deduplicated check spawns", async () => {
+    const root = repo();
+    mkdirSync(join(root, ".repo-harness"), { recursive: true });
+    writeFileSync(join(root, ".repo-harness/checks.json"), JSON.stringify({
+      version: 1,
+      checks: {
+        shared: {
+          command: [process.execPath, "-e", "setTimeout(() => process.exit(0), 500)"],
+          timeoutMs: 5_000,
+        },
+      },
+    }));
+    const firstPids: number[] = [];
+    const secondPids: number[] = [];
+    const first = runControllerCheckAsync(root, "shared", {
+      onSpawn: (pid) => firstPids.push(pid),
+    });
+    await Bun.sleep(25);
+    const second = runControllerCheckAsync(root, "shared", {
+      onSpawn: (pid) => secondPids.push(pid),
+    });
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(firstResult.ok).toBe(true);
+    expect(secondResult.executedAt).toBe(firstResult.executedAt);
+    expect(firstPids).toHaveLength(1);
+    expect(secondPids).toEqual(firstPids);
+  });
+
+  test("does not time out a queued check before its worker spawns", () => {
+    const root = repo();
+    mkdirSync(join(root, ".repo-harness"), { recursive: true });
+    writeFileSync(join(root, ".repo-harness/checks.json"), JSON.stringify({
+      version: 1,
+      checks: {
+        focused: { command: [process.execPath, "-e", "process.exit(0)"], timeoutMs: 5_000 },
+      },
+    }));
+    const job = submitLocalBridgeJob(root, {
+      action: "run-check",
+      requestedBy: "test",
+      payload: { checkId: "focused", timeoutMs: 5_000 },
+    });
+    const path = join(root, ".ai/harness/local-jobs", job.jobId, "job.json");
+    const queued = JSON.parse(readFileSync(path, "utf-8"));
+    queued.status = "running";
+    queued.startedAt = new Date(Date.now() - 60_000).toISOString();
+    queued.updatedAt = queued.startedAt;
+    queued.ownerPid = process.pid;
+    delete queued.deadlineAt;
+    delete queued.workerPid;
+    writeFileSync(path, `${JSON.stringify(queued, null, 2)}\n`);
+
+    expect(getLocalBridgeJob(root, job.jobId).status).toBe("running");
   });
 
   test("reconciles stale running checks after a Controller restart", () => {

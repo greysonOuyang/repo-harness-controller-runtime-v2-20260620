@@ -286,12 +286,19 @@ function buildTasks(drafts: TaskDraft[], now = new Date().toISOString()): Contro
   return tasks;
 }
 
+type TaskReadinessOptions = {
+  approveRisk?: boolean;
+  approveDestructive?: boolean;
+  retryFromRunId?: string;
+  activeRuns?: ReturnType<typeof readActiveRunEvidence>;
+};
+
 function buildTaskReadiness(
   repoRoot: string,
   issue: ControllerIssue,
   task: ControllerTask,
   states: ReadonlyMap<string, ReturnType<typeof resolveEffectiveTaskState>>,
-  options: { approveRisk?: boolean; approveDestructive?: boolean; retryFromRunId?: string } = {},
+  options: TaskReadinessOptions = {},
 ): TaskReadiness {
   const blockers: IssueReadinessFinding[] = [];
   const warnings: IssueReadinessFinding[] = [];
@@ -312,7 +319,7 @@ function buildTaskReadiness(
   else if (state.activeRunIds.length > 0) add('ACTIVE_RUN_CONFLICT', 'blocker', `Task already has active Run evidence: ${state.activeRunIds.join(', ')}.`);
 
   if (policy.executionClass !== 'read_only' && task.allowedPaths.length > 0) {
-    for (const run of readActiveRunEvidence(repoRoot)) {
+    for (const run of options.activeRuns ?? readActiveRunEvidence(repoRoot)) {
       if (run.issueId === issue.id && run.taskId === task.id) continue;
       if (!run.executionClass || !run.allowedPaths) continue;
       if (!executionScopesConflict(
@@ -373,7 +380,7 @@ export function inspectTaskReadiness(
   repoRoot: string,
   issueIdValue: string,
   taskId: string,
-  options: { approveRisk?: boolean; approveDestructive?: boolean; retryFromRunId?: string } = {},
+  options: TaskReadinessOptions = {},
 ): TaskReadiness {
   const issue = getIssue(repoRoot, issueIdValue);
   const task = issue.tasks.find((entry) => entry.id === taskId);
@@ -386,6 +393,7 @@ function refreshReadiness(repoRoot: string, issue: ControllerIssue): void {
   if (issue.archivedAt || issue.status === 'cancelled') return;
 
   const states = resolveIssueTaskStates(issue, readIssueRunEvidence(repoRoot, issue));
+  const activeRuns = readActiveRunEvidence(repoRoot);
   for (const task of issue.tasks) {
     const state = states.get(task.id)!;
     if (state.terminal || state.inactive || state.requiresExplicitRetry || state.activeRunIds.length > 0) continue;
@@ -394,8 +402,12 @@ function refreshReadiness(repoRoot: string, issue: ControllerIssue): void {
       // Readiness status reflects executable work, while high-risk confirmation is supplied at dispatch time.
       approveRisk: true,
       approveDestructive: false,
+      activeRuns,
     });
-    const nonApprovalBlockers = readiness.blockers.filter((entry) => entry.code !== 'DESTRUCTIVE_APPROVAL_REQUIRED');
+    const transitionalBlockerCodes = new Set(['TASK_NOT_DISPATCHABLE']);
+    const nonApprovalBlockers = readiness.blockers.filter(
+      (entry) => entry.code !== 'DESTRUCTIVE_APPROVAL_REQUIRED' && !transitionalBlockerCodes.has(entry.code),
+    );
     task.status = nonApprovalBlockers.length === 0
       ? 'ready'
       : nonApprovalBlockers.some((entry) => ['CANCELLED_DEPENDENCY', 'MISSING_DEPENDENCY', 'TASK_SCOPE_REQUIRED'].includes(entry.code))
@@ -411,7 +423,11 @@ function refreshReadiness(repoRoot: string, issue: ControllerIssue): void {
   if (issue.tasks.length > 0 && issue.tasks.every((task) => refreshedStates.get(task.id)?.effectiveStatus === 'done')) issue.status = 'done';
   else if (active.some((task) => ['queued', 'running', 'waiting_for_user', 'review', 'integrated', 'verifying', 'changes_requested', 'verified', 'done'].includes(refreshedStates.get(task.id)!.effectiveStatus))) issue.status = 'in_progress';
   else {
-    const executable = active.some((task) => buildTaskReadiness(repoRoot, issue, task, refreshedStates, { approveRisk: true, approveDestructive: true }).ready);
+    const executable = active.some((task) => buildTaskReadiness(repoRoot, issue, task, refreshedStates, {
+      approveRisk: true,
+      approveDestructive: true,
+      activeRuns,
+    }).ready);
     issue.status = executable || active.length > 0 ? 'planned' : 'launch_blocked';
   }
 }
@@ -711,12 +727,13 @@ export function inspectIssueReadiness(repoRoot: string, issueIdValue: string): I
     ));
   }
 
+  const activeRuns = readActiveRunEvidence(repoRoot);
   const taskReadiness = issue.tasks
     .filter((task) => {
       const state = states.get(task.id)!;
       return !state.terminal && !state.inactive;
     })
-    .map((task) => buildTaskReadiness(repoRoot, issue, task, states));
+    .map((task) => buildTaskReadiness(repoRoot, issue, task, states, { activeRuns }));
   const readyTasks = taskReadiness.filter((entry) => entry.ready);
   const queueableTasks = taskReadiness.filter((entry) => entry.queueable);
   const agents: Record<ControllerAgent, number> = { codex: 0, claude: 0, 'github-copilot': 0 };
@@ -851,6 +868,7 @@ export function projectBoard(repoRoot: string): {
   const queueableTasks: Array<Record<string, string>> = [];
   const statesByIssue = new Map<string, Map<string, ReturnType<typeof resolveEffectiveTaskState>>>();
   const readinessByTask = new Map<string, TaskReadiness>();
+  const activeRuns = readActiveRunEvidence(repoRoot);
   for (const issue of issues) {
     const states = resolveIssueTaskStates(issue, readIssueRunEvidence(repoRoot, issue));
     statesByIssue.set(issue.id, states);
@@ -859,7 +877,7 @@ export function projectBoard(repoRoot: string): {
       const state = states.get(task.id)!;
       targetCounts[state.effectiveStatus] = (targetCounts[state.effectiveStatus] ?? 0) + 1;
       declaredCounts[state.declaredStatus] = (declaredCounts[state.declaredStatus] ?? 0) + 1;
-      const readiness = buildTaskReadiness(repoRoot, issue, task, states);
+      const readiness = buildTaskReadiness(repoRoot, issue, task, states, { activeRuns });
       readinessByTask.set(`${issue.id}/${task.id}`, readiness);
       const boardTask = {
         issueId: issue.id,

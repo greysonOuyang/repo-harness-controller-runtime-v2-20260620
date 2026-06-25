@@ -1,4 +1,4 @@
-import { appendFileSync, readFileSync, writeFileSync } from "fs";
+import { appendFileSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { dirname, join, relative } from "path";
 import { spawn } from "child_process";
 import { getIssue, removeEphemeralIssue, updateTask } from "../controller/issue-store";
@@ -32,12 +32,14 @@ function event(
   );
 }
 
+function persistJson(path: string, value: unknown): void {
+  const temporaryPath = `${path}.${process.pid}.tmp`;
+  writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf-8");
+  renameSync(temporaryPath, path);
+}
+
 function persistMeta(value: AgentJobMeta): void {
-  writeFileSync(
-    config.metaPath,
-    `${JSON.stringify(value, null, 2)}\n`,
-    "utf-8",
-  );
+  persistJson(config.metaPath, value);
 }
 
 function appendBounded(
@@ -443,31 +445,24 @@ const error =
     : stderrPreview.trim() ||
       `agent exited with code ${result.code ?? "unknown"}${result.signal ? ` (${result.signal})` : ""}`);
 
-writeFileSync(
-  config.resultPath,
-  `${JSON.stringify(
-    {
-      ok,
-      exitCode: result.code,
-      timedOut,
-      signal: result.signal,
-      error,
-      stdoutBytes,
-      stderrBytes,
-      stdoutTruncated,
-      stderrTruncated,
-      finishedAt,
-    },
-    null,
-    2,
-  )}\n`,
-  "utf-8",
-);
+persistJson(config.resultPath, {
+  ok,
+  exitCode: result.code,
+  timedOut,
+  signal: result.signal,
+  error,
+  stdoutBytes,
+  stderrBytes,
+  stdoutTruncated,
+  stderrTruncated,
+  finishedAt,
+});
 
 const finalMeta = JSON.parse(
   readFileSync(config.metaPath, "utf-8"),
 ) as AgentJobMeta;
-finalMeta.status = ok ? "succeeded" : "failed";
+const autoFinalizing = ok && config.autoIntegrate && finalMeta.executionMode === "worktree";
+finalMeta.status = ok ? (autoFinalizing ? "running" : "succeeded") : "failed";
 finalMeta.exitCode = result.code;
 finalMeta.error = error;
 finalMeta.terminationReason = timedOut
@@ -478,11 +473,16 @@ finalMeta.terminationReason = timedOut
       ? "signal"
       : undefined;
 finalMeta.lastHeartbeatAt = finishedAt;
-finalMeta.finishedAt = finishedAt;
+if (autoFinalizing) delete finalMeta.finishedAt;
+else finalMeta.finishedAt = finishedAt;
 finalMeta.progress = {
-  phase: ok ? "completed" : "failed",
-  percent: 100,
-  currentActivity: ok ? "Agent 实现已完成" : (error ?? "Agent 执行失败"),
+  phase: autoFinalizing ? "finalizing" : ok ? "completed" : "failed",
+  percent: autoFinalizing ? 96 : 100,
+  currentActivity: autoFinalizing
+    ? "Agent 实现已完成，正在自动集成 worktree 修改"
+    : ok
+      ? "Agent 实现已完成"
+      : (error ?? "Agent 执行失败"),
   lastActivityAt: finishedAt,
   activityCount: (finalMeta.progress?.activityCount ?? 0) + 1,
 };
@@ -493,10 +493,9 @@ event("log_updated", "Agent output stream closed.", {
   stdoutTruncated,
   stderrTruncated,
 });
-event(
-  ok ? "run_succeeded" : "run_failed",
-  ok ? "Agent process finished successfully." : error,
-);
+if (!ok) event("run_failed", error);
+else if (autoFinalizing) event("run_activity", "Agent process finished; automatic integration is finalizing.");
+else event("run_succeeded", "Agent process finished successfully.");
 
 if (!ok) {
   try {
@@ -573,12 +572,16 @@ if (ok && config.autoIntegrate && finalMeta.executionMode === "worktree") {
     const integratedMeta = JSON.parse(
       readFileSync(config.metaPath, "utf-8"),
     ) as AgentJobMeta;
-    integratedMeta.worktreeCleanedAt = new Date().toISOString();
+    const completedAt = new Date().toISOString();
+    integratedMeta.status = "succeeded";
+    integratedMeta.finishedAt = completedAt;
+    integratedMeta.lastHeartbeatAt = completedAt;
+    integratedMeta.worktreeCleanedAt = completedAt;
     integratedMeta.progress = {
       phase: "completed",
       percent: 100,
       currentActivity: "实现已完成并自动集成到当前工作区",
-      lastActivityAt: integratedMeta.worktreeCleanedAt,
+      lastActivityAt: completedAt,
       activityCount: (integratedMeta.progress?.activityCount ?? 0) + 1,
     };
     persistMeta(integratedMeta);
@@ -587,10 +590,15 @@ if (ok && config.autoIntegrate && finalMeta.executionMode === "worktree") {
       "Integrated worktree and temporary branch were removed.",
       cleanup,
     );
+    event("run_succeeded", "Agent process, automatic integration, and worktree cleanup completed.");
   } catch (integrationError) {
     const failedMeta = JSON.parse(
       readFileSync(config.metaPath, "utf-8"),
     ) as AgentJobMeta;
+    const completedAt = new Date().toISOString();
+    failedMeta.status = "succeeded";
+    failedMeta.finishedAt = completedAt;
+    failedMeta.lastHeartbeatAt = completedAt;
     failedMeta.autoIntegrationError =
       integrationError instanceof Error
         ? integrationError.message
@@ -599,10 +607,11 @@ if (ok && config.autoIntegrate && finalMeta.executionMode === "worktree") {
       phase: "waiting",
       percent: 96,
       currentActivity: `实现完成，但自动集成需要处理：${failedMeta.autoIntegrationError}`,
-      lastActivityAt: new Date().toISOString(),
+      lastActivityAt: completedAt,
       activityCount: (failedMeta.progress?.activityCount ?? 0) + 1,
     };
     persistMeta(failedMeta);
+    event("run_succeeded", "Agent process succeeded; automatic integration requires review.");
     event(
       "run_waiting",
       "Automatic worktree integration failed; the worktree was preserved for review.",

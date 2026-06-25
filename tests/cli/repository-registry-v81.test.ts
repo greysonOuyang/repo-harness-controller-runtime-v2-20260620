@@ -10,6 +10,7 @@ import {
 } from '../../src/cli/repositories/identity';
 import {
   listRepositories,
+  refreshRepository,
   registerRepository,
   resolveRepositorySelection,
 } from '../../src/cli/repositories/registry';
@@ -47,6 +48,24 @@ describe('v8.1 repository identity and selection', () => {
       }).repoId).toBe(fixture.repoB.repoId);
     } finally {
       fixture.cleanup();
+    }
+  });
+
+  test('refresh preserves repoId when the Git origin changes', () => {
+    const root = mkdtempSync(join(tmpdir(), 'repo-harness-v81-refresh-'));
+    const controllerHome = mkdtempSync(join(tmpdir(), 'repo-harness-v81-controller-'));
+    try {
+      execSync('git init -q', { cwd: root });
+      execSync('git remote add origin https://github.com/example/original.git', { cwd: root });
+      const registered = registerRepository({ path: root, controllerHome });
+      execSync('git remote set-url origin https://github.com/example/renamed.git', { cwd: root });
+      const refreshed = refreshRepository(registered.repoId, controllerHome);
+      expect(refreshed.repoId).toBe(registered.repoId);
+      expect(refreshed.canonicalRemote).toBe('github.com/example/renamed');
+      expect(listRepositories(controllerHome)).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(controllerHome, { recursive: true, force: true });
     }
   });
 
