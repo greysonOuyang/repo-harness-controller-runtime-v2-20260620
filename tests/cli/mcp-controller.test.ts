@@ -12,6 +12,8 @@ import { tmpdir } from "os";
 import { spawnSync } from "child_process";
 import { join } from "path";
 import { getMcpPolicy } from "../../src/cli/mcp/policy";
+import { callRepositoryTool } from "../../src/cli/mcp/repository-tools";
+import { registerRepository } from "../../src/cli/repositories/registry";
 import {
   buildMcpToolDefinitions,
   callMcpTool,
@@ -398,6 +400,43 @@ describe("MCP controller profile", () => {
     });
   });
 
+  test("keeps short controller reads responsive while a long check is running", async () => {
+    await withController(async (repoRoot, ctx) => {
+      writeFileSync(
+        join(repoRoot, ".repo-harness/checks.json"),
+        JSON.stringify({
+          version: 1,
+          checks: {
+            focused: {
+              description: "Delayed controller smoke check",
+              command: [process.execPath, "-e", 'setTimeout(() => console.log("done"), 2500)'],
+              timeoutMs: 10_000,
+            },
+          },
+        }),
+      );
+      expect(spawnSync("git", ["init", "-b", "main"], { cwd: repoRoot }).status).toBe(0);
+      expect(spawnSync("git", ["config", "user.email", "test@example.com"], { cwd: repoRoot }).status).toBe(0);
+      expect(spawnSync("git", ["config", "user.name", "Test"], { cwd: repoRoot }).status).toBe(0);
+      expect(spawnSync("git", ["add", "."], { cwd: repoRoot }).status).toBe(0);
+      expect(spawnSync("git", ["commit", "-m", "initial"], { cwd: repoRoot }).status).toBe(0);
+      const controllerHome = join(repoRoot, ".repo-harness-controller-home");
+      const repository = registerRepository({ path: repoRoot, controllerHome });
+      const started = await jsonTool(ctx, "run_check", { check_id: "focused" });
+      expect(typeof started.value.job.jobId).toBe("string");
+      const readsStartedAt = Date.now();
+      const [controllerContext, repositoryGet, localStatus] = await Promise.all([
+        jsonTool(ctx, "controller_context"),
+        callRepositoryTool(controllerHome, "repository_get", { repo_id: repository.repoId }).then((result) => JSON.parse(result?.content[0]?.text ?? "{}")),
+        jsonTool(ctx, "local_bridge_status"),
+      ]);
+      expect(Date.now() - readsStartedAt).toBeLessThan(2_500);
+      expect(controllerContext.value.localBridge).toBeTruthy();
+      expect(repositoryGet.repository.repoId).toBe(repository.repoId);
+      expect(localStatus.value.endpoint).toContain("127.0.0.1");
+    });
+  });
+
   test("applies SHA-guarded bounded edits and rolls them back", async () => {
     await withController(async (repoRoot, ctx) => {
       const read = await jsonTool(ctx, "read_workflow_file", {
@@ -476,12 +515,25 @@ describe("MCP controller profile", () => {
       });
       const diff = await jsonTool(ctx, "get_edit_session_diff", { session_id: session.value.sessionId });
       expect(diff.value.patch).toContain("+export const value = 3;");
+      const verifyStartedAt = Date.now();
       const verified = await jsonTool(ctx, "verify_edit_session", {
         session_id: session.value.sessionId,
         reviewer: "test-reviewer",
+        request_id: "verify-edit-session-1",
       });
-      expect(verified.value.status).toBe("checked");
-      expect(verified.value.checkResults[0].ok).toBe(true);
+      expect(Date.now() - verifyStartedAt).toBeLessThan(2_500);
+      expect(verified.value.accepted).toBe(true);
+      expect(typeof verified.value.job.jobId).toBe("string");
+      let verificationJob = (await jsonTool(ctx, "get_local_job", {
+        job_id: verified.value.job.jobId,
+      })).value.job;
+      for (let attempt = 0; attempt < 120 && verificationJob.status === "running"; attempt += 1) {
+        await Bun.sleep(25);
+        verificationJob = (await jsonTool(ctx, "get_local_job", {
+          job_id: verified.value.job.jobId,
+        })).value.job;
+      }
+      expect(verificationJob.status).toBe("succeeded");
       const finalized = await jsonTool(ctx, "finalize_edit_session", {
         session_id: session.value.sessionId,
         reviewer: "test-reviewer",

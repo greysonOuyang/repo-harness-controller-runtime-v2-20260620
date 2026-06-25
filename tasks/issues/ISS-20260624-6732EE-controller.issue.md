@@ -2,7 +2,7 @@
 id: "ISS-20260624-6732EE"
 kind: "bug"
 status: "in_progress"
-updated_at: "2026-06-25T08:03:17.248Z"
+updated_at: "2026-06-25T08:45:19.079Z"
 source: "repo-harness-controller-v8"
 ---
 
@@ -172,7 +172,7 @@ source: "repo-harness-controller-v8"
 
 ### T15 — 建立活跃检查索引并限制历史扫描
 
-- Status: `running`
+- Status: `blocked`
 - Objective: 将 run-check 去重与活跃状态读取从最近历史窗口中分离，优先读取非终态索引；历史列表只按请求上限读取，不因检查去重扫描大量旧 Job。
 - Depends on: `T2`
 - Allowed paths: `src/cli/local-bridge/job-store.ts`, `src/cli/local-bridge/types.ts`, `tests/cli/local-bridge.test.ts`

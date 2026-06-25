@@ -1,0 +1,439 @@
+# Failure Recovery
+
+> Status: **Runtime Authority**
+
+## 1. Objective
+
+Failure recovery preserves durable truth when client connections, Gateway sessions, Controller processes, Workers, Agents, external providers, repositories, or indexes fail independently.
+
+The recovery objective is not to turn every uncertain state into success. It is to determine what can be proven, preserve evidence, prevent duplicate unsafe execution, and expose an explicit next action.
+
+## 2. Failure Domains
+
+The target runtime has distinct failure domains:
+
+```text
+Client / MCP session
+Gateway
+Controller Daemon
+Repo Actor
+Worker
+Agent or command process tree
+External provider
+Repository checkout
+Controller Home storage
+Projection / index
+Network tunnel or reverse proxy
+```
+
+A failure in one domain must not automatically terminate or corrupt another domain.
+
+## 3. Client and Transport Failure
+
+Examples:
+
+- MCP client disconnects;
+- reverse proxy returns 502;
+- tunnel changes endpoint;
+- Streamable HTTP session is lost;
+- request exceeds proxy timeout;
+- response body is truncated.
+
+### Target Behavior
+
+If a command was durably accepted before disconnection:
+
+- the Job continues according to its contract;
+- repeated request with the same idempotency key returns the existing Job;
+- the client can recover through `get_job`, `get_run`, or related detail tools;
+- the original connection is not execution ownership.
+
+If durable acceptance cannot be proven, the caller may retry using the same request ID.
+
+### Health Requirement
+
+Gateway health endpoints and compact status queries must not wait for active long operations.
+
+A 502 may describe Gateway or proxy availability. It must not be used as evidence that a Job failed or never started.
+
+## 4. Gateway Failure
+
+The Gateway is stateless except for transport/session caches and bounded projections.
+
+After restart it must:
+
+1. reload authentication and tool-surface configuration;
+2. reconnect to Controller Daemon or Controller Home;
+3. expose the same stable repository and Job identities;
+4. reject or redirect stale MCP sessions cleanly;
+5. avoid resubmitting accepted work without idempotency lookup.
+
+Gateway restart must not cancel Workers.
+
+## 5. Controller Daemon Failure
+
+The Controller Daemon owns scheduling decisions, Repo Actors, reconciliation, Schedule delivery, and Lease management.
+
+After restart it must:
+
+```text
+load repository registry
+load active Job/Run/Occurrence/Lease indexes
+rebuild missing indexes when necessary
+recreate logical Repo Actors
+reconcile active ownership
+resume fair scheduling
+redeliver due Schedule windows idempotently
+```
+
+The Controller must not assume every persisted `running` entity is still running. It verifies Lease, heartbeat, process/provider state, and durable result evidence.
+
+## 6. Repo Actor Recovery
+
+A Repo Actor is a logical single owner. Its mailbox and sequence position must be recoverable.
+
+Actor recovery reads:
+
+- repository enabled state;
+- active Jobs and Claims;
+- Leases and fencing tokens;
+- Task effective states;
+- Workspace and Worktree ownership;
+- Integration Queue;
+- release freeze;
+- pending Schedule Occurrences.
+
+Commands are applied idempotently by command ID or request ID. Replaying an already-applied command returns the recorded result.
+
+## 7. Worker Failure
+
+A Worker may exit because of:
+
+- process crash;
+- host restart;
+- timeout termination;
+- explicit cancellation;
+- resource exhaustion;
+- launch error;
+- lost Controller connection.
+
+Worker liveness is not inferred only from a parent PID. Recovery considers:
+
+```text
+Lease validity
+fencing token
+worker PID
+child and process-group state
+heartbeat
+result artifact
+stdout/stderr/event completion
+external provider state
+```
+
+A dead Worker with a complete valid result may be reconciled to terminal success. A live descendant without a valid Lease must not retain state-write authority.
+
+## 8. Process Tree Ownership
+
+Local execution must record enough data to identify the complete process tree or process group.
+
+Timeout or cancellation procedure:
+
+```text
+record termination intent
+signal process group gracefully
+wait bounded grace period
+signal remaining group forcefully when allowed
+record observed exit state
+persist unresolved descendants if any
+release Lease only after ownership transition is durable
+```
+
+A parent process exit is not sufficient evidence that compilers, tests, or Agent descendants have exited.
+
+## 9. External Provider Failure
+
+For GitHub or another provider:
+
+- local Run stores provider session identity and links;
+- provider status is refreshed independently from MCP connection;
+- unavailable provider state yields a retriable external blocker or `unknown`, not fabricated success;
+- duplicate provider sessions are prevented by request identity;
+- external branch/PR existence is evidence, not automatic acceptance.
+
+## 10. Storage Failure
+
+Controller Home and repository runtime bindings are durable state dependencies.
+
+On write failure:
+
+- do not start a new Worker;
+- do not advance lifecycle in memory only;
+- return a storage-blocked result;
+- preserve temporary files for diagnostics where safe;
+- avoid deleting the prior valid snapshot.
+
+Atomic-write protocol:
+
+```text
+write temporary file
+flush when required by risk class
+rename atomically
+update index after entity snapshot
+append audit event or record repair anomaly
+```
+
+If entity write succeeds and index update fails, reconciliation rebuilds the index from bounded durable entities.
+
+## 11. Projection and Index Recovery
+
+Indexes are rebuildable projections.
+
+Target indexes include:
+
+```text
+active Jobs
+requestId -> entity
+Task -> Run IDs
+active Claims and Leases
+pending Integration Queue
+active Schedule Occurrences
+Candidate Finding semantic keys
+recent attention items
+```
+
+Rules:
+
+- hot reads use indexes;
+- index owner/version is persisted;
+- process restart may validate or rebuild active indexes;
+- a missing terminal-history index does not require scanning history on every request;
+- rebuild runs as a bounded reconciliation Job when history is large;
+- malformed entities are isolated and reported rather than silently discarded.
+
+## 12. Lease Recovery and Fencing
+
+A Lease may be:
+
+```text
+active
+expired
+released
+revoked
+orphaned
+```
+
+Recovery procedure:
+
+1. read persisted Lease and resource fencing counter;
+2. determine whether current owner Job is non-terminal;
+3. inspect heartbeat and execution evidence;
+4. if ownership is uncertain, prevent new writes until expiry or explicit revocation;
+5. grant new ownership with a higher fencing token;
+6. reject late writes carrying the older token.
+
+Process PID reuse must not grant ownership. The Lease ID and fencing token are authoritative.
+
+## 13. Orphan Classification
+
+Use `orphaned` when:
+
+- an active owner disappeared;
+- no valid terminal result proves success or failure;
+- repeating the operation may have side effects;
+- manual or policy-guided reconciliation is required.
+
+Orphan metadata includes:
+
+```text
+lastHeartbeatAt
+leaseExpiredAt
+lastKnownPid/provider state
+lastEvent
+artifact completeness
+safeToRetry
+reconciliationReason
+```
+
+## 14. Unknown Run Classification
+
+A Run uses `unknown` when execution outcome cannot be proven, including startup ambiguity or provider uncertainty.
+
+Unknown does not mean failed, succeeded, or safe to retry. Task readiness must require explicit retry authorization after the Controller evaluates duplicate-execution risk.
+
+## 15. Stale Classification
+
+Use `stale` when the operation may have executed correctly but cannot satisfy the original contract because a required precondition changed.
+
+Examples:
+
+- repository Revision changed;
+- Edit Session advanced to another Revision;
+- approval token snapshot changed;
+- integration target moved;
+- Schedule window was superseded;
+- repository identity or provider mapping changed.
+
+Stale evidence remains historical but cannot complete the current Task.
+
+## 16. Timed-Out Classification
+
+A timeout requires:
+
+- a persisted deadline;
+- observed deadline expiry;
+- termination or provider cancellation attempt;
+- durable timeout event;
+- resource-release/reconciliation outcome.
+
+An in-memory timer firing without durable deadline identity is insufficient recovery evidence.
+
+## 17. Retry Safety
+
+Before retry, determine operation class:
+
+### Naturally idempotent
+
+Examples: bounded read, exact-revision check with cache key.
+
+May retry automatically within budget.
+
+### Idempotent through request identity
+
+Examples: Job admission, Run creation, Schedule Occurrence creation.
+
+Retry returns the original entity.
+
+### Requires reconciliation
+
+Examples: command may have modified files, Agent may still be alive, external provider session may exist.
+
+Do not retry until current outcome and resource ownership are reconciled.
+
+### Explicitly non-repeatable
+
+Examples: publication, deployment, destructive mutation.
+
+Require human decision and operation-specific compensation or resume protocol.
+
+## 18. Reconciliation Jobs
+
+Reconciliation is itself durable and bounded.
+
+Types include:
+
+- active Job reconciliation;
+- active Run reconciliation;
+- Lease reconciliation;
+- Worktree inventory reconciliation;
+- Integration Queue reconciliation;
+- repository registry identity reconciliation;
+- Schedule Occurrence reconciliation;
+- projection rebuild.
+
+Reconciliation Jobs must be idempotent and normally read-only except for lifecycle repair and index updates.
+
+## 19. Startup Sequence
+
+Controller startup order:
+
+```text
+1. validate Controller Home
+2. load repository registry
+3. validate runtime storage bindings
+4. load/rebuild global active indexes
+5. instantiate Repo Actors
+6. reconcile Claims and Leases
+7. reconcile active Jobs/Runs/Occurrences
+8. start Worker dispatch
+9. deliver due Schedules
+10. report readiness
+```
+
+Gateway may report liveness before Controller readiness, but execution admission must wait for durable state readiness.
+
+## 20. Health Model
+
+### Liveness
+
+The process event loop responds.
+
+### Readiness
+
+The component can safely perform its role.
+
+Suggested health surfaces:
+
+```text
+Gateway /health
+Gateway /ready
+Controller status
+Worker pool status
+Repository-specific health
+```
+
+Repository-specific degradation does not make Gateway liveness fail.
+
+## 21. Recovery Notifications
+
+Notify only on material state change:
+
+- Job recovered to terminal outcome;
+- Job became orphaned/unknown;
+- retry is unsafe without user decision;
+- repository storage is blocked;
+- integration conflict requires action;
+- repeated Controller/Gateway instability crosses policy threshold.
+
+Do not repeatedly notify for an unchanged orphan or external blocker.
+
+## 22. Recovery Testing
+
+Required test scenarios include:
+
+- client disconnect after Job acceptance;
+- Gateway restart during Worker execution;
+- Controller restart with running Jobs;
+- Worker crash before and after result persistence;
+- process descendants surviving parent exit;
+- expired Lease and late stale Worker write;
+- corrupt/missing active index rebuild;
+- repeated request ID after timeout;
+- external provider temporarily unavailable;
+- repository A recovery while repository B continues.
+
+## 23. Current Implementation
+
+Current code already has:
+
+- persistent Job and Run records;
+- PID, heartbeat, deadlines, and startup deadlines;
+- atomic Local Job writes;
+- active Local Job index and rebuild;
+- process-group signaling for some checks and Agent paths;
+- orphan/stale/timed-out compatibility states;
+- repository runtime storage validation;
+- request IDs for parts of dispatch;
+- idempotent reconciliation logic in several lifecycle paths.
+
+## 24. Migration Gaps
+
+- Gateway, Controller Daemon, and Worker are not fully separate;
+- some MCP handlers still await long execution;
+- not every Job type is persisted before execution;
+- fencing tokens are not complete across long resources;
+- active indexes and request-id indexes are inconsistent across entity types;
+- process-tree terminal evidence is not uniform;
+- recovery events lack one shared schema;
+- startup reconciliation is spread across read paths rather than one explicit phase.
+
+## 25. Migration Rule
+
+Until full process separation:
+
+- no new long operation may depend on MCP request lifetime;
+- touched command/check handlers should migrate to durable Jobs;
+- repository-scoped locks must not cover Worker lifetime;
+- active status reads must stay bounded;
+- retries use stable request IDs;
+- uncertain side-effecting operations require reconciliation before retry;
+- 502 or network error must not be interpreted as Job failure without durable evidence.

@@ -3,7 +3,11 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { dirname, join, relative } from 'path';
 import { atomicWriteFile } from '../../effects/fs-transaction';
 import { runProcess } from '../../effects/process-runner';
-import { runControllerCheck, type ControllerCheckResult } from '../controller/check-runner';
+import {
+  runControllerCheck,
+  runControllerCheckAsync,
+  type ControllerCheckResult,
+} from '../controller/check-runner';
 import { tryAppendControllerWorklogEvent } from '../controller/worklog';
 import { globMatches, resolveMcpPath } from '../mcp/paths';
 import type { McpPolicy } from '../mcp/types';
@@ -344,6 +348,61 @@ function checkRecord(result: ControllerCheckResult): EditSessionCheckRecord {
   };
 }
 
+function resolveVerificationRequest(repoRoot: string, sessionId: string, input: {
+  checkIds?: string[];
+  reviewer?: string;
+  note?: string;
+} = {}): {
+  session: EditSession;
+  checkIds: string[];
+  reviewer: string;
+  note?: string;
+} {
+  const session = getEditSession(repoRoot, sessionId);
+  if (!['dirty', 'check_failed', 'checked'].includes(session.status)) {
+    throw new Error(`edit session cannot be checked from ${session.status}`);
+  }
+  assertCurrentHashes(repoRoot, session);
+  return {
+    session,
+    checkIds: Array.from(new Set((input.checkIds ?? session.requestedChecks).map((item) => item.trim()).filter(Boolean))),
+    reviewer: input.reviewer?.trim() || 'chatgpt-controller',
+    note: input.note?.trim() || undefined,
+  };
+}
+
+function persistVerificationResult(
+  repoRoot: string,
+  session: EditSession,
+  input: {
+    checkIds: string[];
+    reviewer: string;
+    note?: string;
+    results: EditSessionCheckRecord[];
+  },
+): EditSession {
+  const at = now();
+  session.requestedChecks = input.checkIds;
+  session.checkResults = input.results;
+  session.reviewer = input.reviewer;
+  session.reviewNote = input.note;
+  session.verifiedAt = input.results.every((result) => result.ok) ? at : undefined;
+  session.status = input.results.every((result) => result.ok) ? 'checked' : 'check_failed';
+  session.updatedAt = at;
+  writeSession(repoRoot, session);
+  tryAppendControllerWorklogEvent(repoRoot, {
+    category: 'edit',
+    action: session.status === 'checked' ? 'edit_session_checked' : 'edit_session_check_failed',
+    summary: `${session.purpose}: ${input.results.filter((result) => result.ok).length}/${input.results.length} checks passed${input.results.length === 0 ? '; no checks were required' : ''}`,
+    actor: input.reviewer,
+    issueId: session.issueId,
+    taskId: session.taskId,
+    editSessionId: session.sessionId,
+    details: { revision: session.currentRevision, checkResults: input.results, note: session.reviewNote },
+  });
+  return session;
+}
+
 function sessionSummary(session: EditSession): EditSessionSummary {
   return {
     sessionId: session.sessionId,
@@ -616,13 +675,8 @@ export function verifyEditSession(repoRoot: string, sessionId: string, input: {
   reviewer?: string;
   note?: string;
 } = {}): EditSession {
-  const session = getEditSession(repoRoot, sessionId);
-  if (!['dirty', 'check_failed', 'checked'].includes(session.status)) {
-    throw new Error(`edit session cannot be checked from ${session.status}`);
-  }
-  assertCurrentHashes(repoRoot, session);
-  const checkIds = Array.from(new Set((input.checkIds ?? session.requestedChecks).map((item) => item.trim()).filter(Boolean)));
-  const results = checkIds.map((checkId) => {
+  const request = resolveVerificationRequest(repoRoot, sessionId, input);
+  const results = request.checkIds.map((checkId) => {
     try {
       return checkRecord(runControllerCheck(repoRoot, checkId));
     } catch (error) {
@@ -634,27 +688,45 @@ export function verifyEditSession(repoRoot: string, sessionId: string, input: {
       } satisfies EditSessionCheckRecord;
     }
   });
-  const reviewer = input.reviewer?.trim() || 'chatgpt-controller';
-  const at = now();
-  session.requestedChecks = checkIds;
-  session.checkResults = results;
-  session.reviewer = reviewer;
-  session.reviewNote = input.note?.trim() || undefined;
-  session.verifiedAt = results.every((result) => result.ok) ? at : undefined;
-  session.status = results.every((result) => result.ok) ? 'checked' : 'check_failed';
-  session.updatedAt = at;
-  writeSession(repoRoot, session);
-  tryAppendControllerWorklogEvent(repoRoot, {
-    category: 'edit',
-    action: session.status === 'checked' ? 'edit_session_checked' : 'edit_session_check_failed',
-    summary: `${session.purpose}: ${results.filter((result) => result.ok).length}/${results.length} checks passed${results.length === 0 ? '; no checks were required' : ''}`,
-    actor: reviewer,
-    issueId: session.issueId,
-    taskId: session.taskId,
-    editSessionId: session.sessionId,
-    details: { revision: session.currentRevision, checkResults: results, note: session.reviewNote },
+  return persistVerificationResult(repoRoot, request.session, {
+    checkIds: request.checkIds,
+    reviewer: request.reviewer,
+    note: request.note,
+    results,
   });
-  return session;
+}
+
+export async function verifyEditSessionAsync(repoRoot: string, sessionId: string, input: {
+  checkIds?: string[];
+  reviewer?: string;
+  note?: string;
+} = {}, options: {
+  onCheckSpawn?: (checkId: string, pid: number) => void;
+} = {}): Promise<EditSession> {
+  const request = resolveVerificationRequest(repoRoot, sessionId, input);
+  const results: EditSessionCheckRecord[] = [];
+  for (const checkId of request.checkIds) {
+    try {
+      const result = await runControllerCheckAsync(repoRoot, checkId, {
+        onSpawn: (pid) => options.onCheckSpawn?.(checkId, pid),
+      });
+      results.push(checkRecord(result));
+    } catch (error) {
+      results.push({
+        checkId,
+        ok: false,
+        summary: error instanceof Error ? error.message : String(error),
+        executedAt: now(),
+      });
+    }
+  }
+  assertCurrentHashes(repoRoot, request.session);
+  return persistVerificationResult(repoRoot, request.session, {
+    checkIds: request.checkIds,
+    reviewer: request.reviewer,
+    note: request.note,
+    results,
+  });
 }
 
 function restoreOperation(repoRoot: string, operation: EditSessionOperationRecord): void {

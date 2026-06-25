@@ -111,6 +111,7 @@ import {
   getLocalBridgeJob,
   getLocalBridgeJobEvents,
   listLocalBridgeJobs,
+  readLocalBridgeJobOutput,
   reconcileLocalBridgeJobs,
   submitLocalBridgeJob,
 } from "../local-bridge/job-store";
@@ -365,7 +366,9 @@ function parseLocalBridgeAction(value: unknown): LocalBridgeJobAction | null {
   const normalized = String(value ?? "").trim();
   return normalized === "launch-task" ||
     normalized === "quick-agent-session" ||
-    normalized === "run-check"
+    normalized === "run-check" ||
+    normalized === "verify-edit-session" ||
+    normalized === "repository-command"
     ? normalized
     : null;
 }
@@ -1357,10 +1360,28 @@ export function buildMcpToolDefinitions(
       },
       {
         name: "get_local_job",
-        description: "Read one local Job Ticket and its event history.",
+        description: "Read one local Job Ticket status and compact metadata.",
         inputSchema: {
           type: "object",
-          properties: { job_id: { type: "string" } },
+          properties: {
+            job_id: { type: "string" },
+            include_events: { type: "boolean" },
+          },
+          required: ["job_id"],
+          additionalProperties: false,
+        },
+        annotations: readOnly,
+      },
+      {
+        name: "get_local_job_output",
+        description: "Read bounded stdout or stderr for one local Job Ticket.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            job_id: { type: "string" },
+            stream: { type: "string", enum: ["stdout", "stderr"] },
+            max_bytes: { type: "number" },
+          },
           required: ["job_id"],
           additionalProperties: false,
         },
@@ -2339,12 +2360,13 @@ export function buildMcpToolDefinitions(
       },
       {
         name: "verify_edit_session",
-        description: "Run named checks against the current edit revision and persist evidence. Checks are optional unless configured on the session.",
+        description: "Start verification for the current edit revision as a Local Job and return immediately. Checks are optional unless configured on the session.",
         inputSchema: {
           type: "object",
           properties: {
             session_id: { type: "string" },
             check_ids: { type: "array", items: { type: "string" } },
+            request_id: { type: "string" },
             reviewer: { type: "string" },
             note: { type: "string" },
           },
@@ -2815,10 +2837,34 @@ export async function callMcpTool(
             "get_local_job requires the controller profile",
           );
         const jobId = String(args.job_id ?? "").trim();
+        const includeEvents = args.include_events === true;
+        const includeOutput = args.include_output === true;
         const payload = {
           job: getLocalBridgeJob(ctx.repoRoot, jobId),
-          events: getLocalBridgeJobEvents(ctx.repoRoot, jobId),
+          ...(includeEvents ? { events: getLocalBridgeJobEvents(ctx.repoRoot, jobId) } : {}),
+          ...(includeOutput
+            ? {
+                output: readLocalBridgeJobOutput(ctx.repoRoot, jobId, {
+                  stream: args.stream === "stderr" ? "stderr" : "stdout",
+                  maxBytes: typeof args.max_bytes === "number" ? args.max_bytes : undefined,
+                }),
+              }
+            : {}),
         };
+        audit(ctx, name, "ok", args);
+        return textResult(payload);
+      }
+      case "get_local_job_output": {
+        if (ctx.policy.profile !== "controller")
+          return errorResult(
+            "TOOL_DISABLED",
+            "get_local_job_output requires the controller profile",
+          );
+        const jobId = String(args.job_id ?? "").trim();
+        const payload = readLocalBridgeJobOutput(ctx.repoRoot, jobId, {
+          stream: args.stream === "stderr" ? "stderr" : "stdout",
+          maxBytes: typeof args.max_bytes === "number" ? args.max_bytes : undefined,
+        });
         audit(ctx, name, "ok", args);
         return textResult(payload);
       }
@@ -4066,13 +4112,40 @@ export async function callMcpTool(
       case "verify_edit_session": {
         if (ctx.policy.profile !== "controller")
           return errorResult("TOOL_DISABLED", "verify_edit_session requires the controller profile");
-        const session = verifyEditSession(ctx.repoRoot, String(args.session_id ?? ""), {
-          checkIds: Array.isArray(args.check_ids) ? stringList(args.check_ids) : undefined,
-          reviewer: typeof args.reviewer === "string" ? args.reviewer : undefined,
-          note: typeof args.note === "string" ? args.note : undefined,
+        const session = getEditSession(ctx.repoRoot, String(args.session_id ?? ""));
+        const requestId = typeof args.request_id === "string" ? args.request_id.trim() || undefined : undefined;
+        const job = submitLocalBridgeJob(ctx.repoRoot, {
+          action: "verify-edit-session",
+          requestedBy: "mcp:verify_edit_session",
+          payload: {
+            sessionId: session.sessionId,
+            revision: session.currentRevision,
+            requestId,
+            checkIds: Array.isArray(args.check_ids) ? stringList(args.check_ids) : undefined,
+            reviewer: typeof args.reviewer === "string" ? args.reviewer : undefined,
+            note: typeof args.note === "string" ? args.note : undefined,
+          },
         });
-        audit(ctx, name, session.status === "checked" ? "ok" : "blocked", args, session.diffPath);
-        return textResult(session);
+        const result = job.status === "approved"
+          ? executeLocalBridgeJob(ctx.repoRoot, job.jobId)
+          : job;
+        audit(ctx, name, "ok", args, session.diffPath);
+        return textResult({
+          accepted: true,
+          job: {
+            jobId: result.jobId,
+            action: result.action,
+            status: result.status,
+            updatedAt: result.updatedAt,
+          },
+          editSession: {
+            sessionId: session.sessionId,
+            revision: session.currentRevision,
+            status: session.status,
+            diffPath: session.diffPath,
+          },
+          next: `Inspect Job ${result.jobId} with get_local_job.`,
+        });
       }
       case "rollback_edit_session": {
         if (ctx.policy.profile !== "controller")

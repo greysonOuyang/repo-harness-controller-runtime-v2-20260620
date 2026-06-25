@@ -5,6 +5,7 @@ import { join } from "path";
 import { spawnSync } from "child_process";
 import { registerRepository } from "../../src/cli/repositories/registry";
 import { callRepositoryTool } from "../../src/cli/mcp/repository-tools";
+import { getLocalBridgeJob, readLocalBridgeJobOutput } from "../../src/cli/local-bridge/job-store";
 
 function git(root: string, args: string[]): void {
   const result = spawnSync("git", ["-C", root, ...args], {
@@ -52,11 +53,18 @@ describe("repository MCP command tools", () => {
         repo_id: repository.repoId,
         command: "git add tracked.txt",
         approval_token: previewValue.approvalToken,
+        request_id: "repo-command-1",
       });
       const executedValue = await json(executed);
-      expect(executedValue.status).toBe("executed");
-      expect(executedValue.ok).toBe(true);
-      expect(executedValue.repositoryChanged).toBe(true);
+      expect(executedValue.accepted).toBe(true);
+      expect(typeof executedValue.jobId).toBe("string");
+      let job = getLocalBridgeJob(repoRoot, executedValue.jobId);
+      for (let attempt = 0; attempt < 120 && job.status === "running"; attempt += 1) {
+        await Bun.sleep(25);
+        job = getLocalBridgeJob(repoRoot, executedValue.jobId);
+      }
+      expect(job.status).toBe("succeeded");
+      expect(job.result?.repositoryChanged).toBe(true);
 
       const status = spawnSync("git", ["-C", repoRoot, "status", "--short"], {
         encoding: "utf-8",
@@ -122,12 +130,22 @@ describe("repository MCP command tools", () => {
         repo_id: repository.repoId,
         command: "python - <<'PY'\nimport time\nprint('start')\ntime.sleep(1)\nprint('ready')\nPY",
         approval_token: preview.approvalToken,
+        request_id: "repo-command-async-1",
       });
       const executedValue = await json(executionPromise);
-      expect(executedValue.status).toBe("executed");
-      expect(executedValue.ok).toBe(true);
-      expect(executedValue.stdout).toContain("ready");
-      expect(executedValue.stderr ?? "").toBe("");
+      expect(executedValue.accepted).toBe(true);
+      expect(typeof executedValue.jobId).toBe("string");
+      expect(["approved", "running"]).toContain(executedValue.status);
+      let job = getLocalBridgeJob(repoRoot, executedValue.jobId);
+      for (let attempt = 0; attempt < 120 && job.status === "running"; attempt += 1) {
+        await Bun.sleep(25);
+        job = getLocalBridgeJob(repoRoot, executedValue.jobId);
+      }
+      expect(job.status).toBe("succeeded");
+      const stdout = readLocalBridgeJobOutput(repoRoot, executedValue.jobId, { stream: "stdout" });
+      expect(stdout.content).toContain("ready");
+      const stderr = readLocalBridgeJobOutput(repoRoot, executedValue.jobId, { stream: "stderr" });
+      expect(stderr.content).toBe("");
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }

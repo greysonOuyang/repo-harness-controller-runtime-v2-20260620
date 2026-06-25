@@ -19,7 +19,13 @@ import {
   MAX_AGENT_TIMEOUT_MS,
   normalizeAgentTimeoutMs,
 } from "../controller/runtime-config";
+import { verifyEditSessionAsync } from "../editing/edit-session";
 import { loadMcpLocalConfig } from "../mcp/auth";
+import {
+  executeRepositoryCommandAsync,
+} from "../repositories/command-executor";
+import { withControllerLockAsync } from "../repositories/locks";
+import { resolveRepositorySelection } from "../repositories/registry";
 import type { ControllerAgent, ControllerTask } from "../controller/types";
 import { taskExecutionPolicy } from "../controller/execution-policy";
 import { tryAppendControllerWorklogEvent } from "../controller/worklog";
@@ -31,8 +37,10 @@ import type {
   LocalBridgeJobAction,
   LocalBridgeJobEvent,
   LocalBridgeJobRequest,
+  RepositoryCommandPayload,
   QuickAgentSessionPayload,
   RunCheckPayload,
+  VerifyEditSessionPayload,
 } from "./types";
 
 const JOB_ROOT = ".ai/harness/local-jobs";
@@ -64,6 +72,14 @@ function metaPath(repoRoot: string, jobId: string): string {
 
 function eventsPath(repoRoot: string, jobId: string): string {
   return join(jobDir(repoRoot, jobId), "events.jsonl");
+}
+
+function stdoutPath(repoRoot: string, jobId: string): string {
+  return join(jobDir(repoRoot, jobId), "stdout.log");
+}
+
+function stderrPath(repoRoot: string, jobId: string): string {
+  return join(jobDir(repoRoot, jobId), "stderr.log");
 }
 
 function allStoredJobPaths(repoRoot: string): string[] {
@@ -212,6 +228,24 @@ function writeJson(path: string, value: unknown): void {
   }
 }
 
+function ensureJobLogFiles(repoRoot: string, jobId: string): void {
+  mkdirSync(jobDir(repoRoot, jobId), { recursive: true });
+  for (const path of [stdoutPath(repoRoot, jobId), stderrPath(repoRoot, jobId)]) {
+    if (!existsSync(path)) writeFileSync(path, "", "utf-8");
+  }
+}
+
+function appendJobOutput(
+  repoRoot: string,
+  jobId: string,
+  stream: "stdout" | "stderr",
+  chunk: string,
+): void {
+  const path = stream === "stdout" ? stdoutPath(repoRoot, jobId) : stderrPath(repoRoot, jobId);
+  ensureJobLogFiles(repoRoot, jobId);
+  appendFileSync(path, chunk, "utf-8");
+}
+
 function readJson<T>(path: string): T {
   return JSON.parse(readFileSync(path, "utf-8")) as T;
 }
@@ -306,7 +340,7 @@ function executionApproval(
   action: LocalBridgeJobAction,
   payload: LocalBridgeJobRequest["payload"],
 ): LocalBridgeApproval {
-  if (action === "run-check") return "auto";
+  if (action === "run-check" || action === "verify-edit-session" || action === "repository-command") return "auto";
   if (action === "launch-task") {
     const input = payload as LaunchTaskPayload;
     const issue = getIssue(repoRoot, input.issueId);
@@ -357,12 +391,80 @@ function findExistingLaunchJob(
   );
 }
 
+function findExistingRunCheckJob(
+  repoRoot: string,
+  payload: RunCheckPayload,
+  revision: string,
+): LocalBridgeJob | undefined {
+  const requestId = payload.requestId?.trim();
+  if (requestId) {
+    const duplicate = readStoredJobs(repoRoot, 500).find((entry) =>
+      entry.action === "run-check" &&
+      typeof (entry.payload as RunCheckPayload).requestId === "string" &&
+      (entry.payload as RunCheckPayload).requestId === requestId,
+    );
+    if (duplicate) return duplicate;
+  }
+  const candidate = readActiveLocalBridgeJobs(repoRoot).find((entry) =>
+    entry.action === "run-check" &&
+    (entry.payload as RunCheckPayload).checkId === payload.checkId &&
+    entry.revision === revision
+  );
+  return candidate ? refreshLocalBridgeJob(repoRoot, candidate, revision) : undefined;
+}
+
+function findExistingVerifyEditSessionJob(
+  repoRoot: string,
+  payload: VerifyEditSessionPayload,
+): LocalBridgeJob | undefined {
+  const jobs = readStoredJobs(repoRoot, 500);
+  const requestId = payload.requestId?.trim();
+  if (requestId) {
+    return jobs.find((entry) =>
+      entry.action === "verify-edit-session" &&
+      typeof (entry.payload as VerifyEditSessionPayload).requestId === "string" &&
+      (entry.payload as VerifyEditSessionPayload).requestId === requestId,
+    );
+  }
+  return jobs.find((entry) =>
+    entry.action === "verify-edit-session" &&
+    ["approved", "running"].includes(entry.status) &&
+    (entry.payload as VerifyEditSessionPayload).sessionId === payload.sessionId &&
+    (entry.payload as VerifyEditSessionPayload).revision === payload.revision &&
+    JSON.stringify((entry.payload as VerifyEditSessionPayload).checkIds ?? []) === JSON.stringify(payload.checkIds ?? []),
+  );
+}
+
+function findExistingRepositoryCommandJob(
+  repoRoot: string,
+  payload: RepositoryCommandPayload,
+): LocalBridgeJob | undefined {
+  const jobs = readStoredJobs(repoRoot, 500);
+  const requestId = payload.requestId?.trim();
+  if (requestId) {
+    return jobs.find((entry) =>
+      entry.action === "repository-command" &&
+      typeof (entry.payload as RepositoryCommandPayload).requestId === "string" &&
+      (entry.payload as RepositoryCommandPayload).requestId === requestId,
+    );
+  }
+  return jobs.find((entry) =>
+    entry.action === "repository-command" &&
+    ["approved", "running"].includes(entry.status) &&
+    (entry.payload as RepositoryCommandPayload).repoId === payload.repoId &&
+    (entry.payload as RepositoryCommandPayload).checkoutId === payload.checkoutId &&
+    (entry.payload as RepositoryCommandPayload).command === payload.command &&
+    (entry.payload as RepositoryCommandPayload).cwd === payload.cwd &&
+    (entry.payload as RepositoryCommandPayload).approvalToken === payload.approvalToken,
+  );
+}
+
 export function submitLocalBridgeJob(
   repoRoot: string,
   request: LocalBridgeJobRequest,
 ): LocalBridgeJob {
   if (
-    !["launch-task", "quick-agent-session", "run-check"].includes(
+    !["launch-task", "quick-agent-session", "run-check", "verify-edit-session", "repository-command"].includes(
       request.action,
     )
   ) {
@@ -374,18 +476,19 @@ export function submitLocalBridgeJob(
   if (request.action === "run-check") {
     const payload = request.payload as RunCheckPayload;
     revision = currentControllerCheckRevision(repoRoot);
-    const candidate = readActiveLocalBridgeJobs(repoRoot).find((entry) =>
-      entry.action === "run-check" &&
-      (entry.payload as RunCheckPayload).checkId === payload.checkId &&
-      entry.revision === revision
-    );
-    if (candidate) {
-      const duplicate = refreshLocalBridgeJob(repoRoot, candidate, revision);
-      if (isActiveLocalBridgeJob(duplicate)) return duplicate;
-    }
+    const duplicate = findExistingRunCheckJob(repoRoot, payload, revision);
+    if (duplicate) return duplicate;
   }
   if (request.action === "launch-task") {
     const existing = findExistingLaunchJob(repoRoot, request.payload as LaunchTaskPayload);
+    if (existing) return refreshLocalBridgeJob(repoRoot, existing);
+  }
+  if (request.action === "verify-edit-session") {
+    const existing = findExistingVerifyEditSessionJob(repoRoot, request.payload as VerifyEditSessionPayload);
+    if (existing) return refreshLocalBridgeJob(repoRoot, existing);
+  }
+  if (request.action === "repository-command") {
+    const existing = findExistingRepositoryCommandJob(repoRoot, request.payload as RepositoryCommandPayload);
     if (existing) return refreshLocalBridgeJob(repoRoot, existing);
   }
   const policyApproval = executionApproval(
@@ -420,6 +523,7 @@ export function submitLocalBridgeJob(
     approvedAt: createdAt,
   };
   saveJob(repoRoot, job);
+  if (request.action === "repository-command") ensureJobLogFiles(repoRoot, job.jobId);
   appendEvent(repoRoot, job.jobId, {
     type: "job_created",
     message: `${job.action} job created with ${approval} approval.`,
@@ -457,6 +561,62 @@ function cleanupEphemeralJob(repoRoot: string, job: LocalBridgeJob): void {
     type: "job_cleaned",
     message: `Ephemeral Quick Agent metadata for ${job.issueId} was cleaned.`,
   });
+}
+
+function runningJobTimedOut(job: LocalBridgeJob, configuredTimeoutMs: number): boolean {
+  const deadlineAt = job.deadlineAt ? Date.parse(job.deadlineAt) : Number.NaN;
+  const startedAt = Date.parse(job.startedAt ?? job.updatedAt);
+  const explicitDeadlineReached = job.deadlineAt !== undefined && Number.isFinite(deadlineAt) && deadlineAt <= Date.now();
+  const legacyDeadlineReached = job.deadlineAt === undefined && Number.isFinite(startedAt) && startedAt + configuredTimeoutMs + 30_000 <= Date.now();
+  return explicitDeadlineReached || legacyDeadlineReached;
+}
+
+function runningJobOrphaned(job: LocalBridgeJob): boolean {
+  return job.ownerPid !== undefined && job.ownerPid !== process.pid && !isPidAlive(job.ownerPid);
+}
+
+function markJobTerminal(
+  repoRoot: string,
+  job: LocalBridgeJob,
+  status: Extract<LocalBridgeJob["status"], "failed" | "timed_out" | "orphaned" | "stale">,
+  message: string,
+  data?: Record<string, unknown>,
+): LocalBridgeJob {
+  job.status = status;
+  job.finishedAt = now();
+  job.error = message;
+  job.workerPid = undefined;
+  appendEvent(repoRoot, job.jobId, {
+    type: "job_failed",
+    message,
+    data,
+  });
+  return saveJob(repoRoot, job);
+}
+
+function refreshLongRunningJob(repoRoot: string, job: LocalBridgeJob): LocalBridgeJob {
+  const payload = job.payload as VerifyEditSessionPayload | RepositoryCommandPayload;
+  const configuredTimeout = resolvedJobTimeout(repoRoot, payload.timeoutMs);
+  if (runningJobTimedOut(job, configuredTimeout)) {
+    signalWorker(job.workerPid, "SIGTERM");
+    return markJobTerminal(
+      repoRoot,
+      job,
+      "timed_out",
+      `${job.action} exceeded its persisted execution deadline.`,
+      { timedOut: true },
+    );
+  }
+  if (runningJobOrphaned(job)) {
+    return markJobTerminal(
+      repoRoot,
+      job,
+      "orphaned",
+      `${job.action} was orphaned when Controller process ${String(job.ownerPid)} exited.`,
+      { orphaned: true },
+    );
+  }
+  return job;
 }
 
 function refreshLocalBridgeJob(
@@ -498,6 +658,9 @@ function refreshLocalBridgeJob(
       return saveJob(repoRoot, job);
     }
     return job;
+  }
+  if ((job.action === "verify-edit-session" || job.action === "repository-command") && job.status === "running") {
+    return refreshLongRunningJob(repoRoot, job);
   }
   if (!job.runId || !["dispatched", "running"].includes(job.status)) return job;
   try {
@@ -588,6 +751,33 @@ export function getLocalBridgeJobEvents(
     .split(/\r?\n/)
     .filter(Boolean)
     .map((line) => JSON.parse(line) as LocalBridgeJobEvent);
+}
+
+export function readLocalBridgeJobOutput(
+  repoRoot: string,
+  jobId: string,
+  input: {
+    stream?: "stdout" | "stderr";
+    maxBytes?: number;
+  } = {},
+): {
+  jobId: string;
+  stream: "stdout" | "stderr";
+  maxBytes: number;
+  truncated: boolean;
+  content: string;
+} {
+  getLocalBridgeJob(repoRoot, jobId);
+  const stream = input.stream === "stderr" ? "stderr" : "stdout";
+  const maxBytes = Math.max(1, Math.min(Math.trunc(input.maxBytes ?? 16 * 1024), 512 * 1024));
+  const path = stream === "stdout" ? stdoutPath(repoRoot, jobId) : stderrPath(repoRoot, jobId);
+  if (!existsSync(path)) {
+    return { jobId, stream, maxBytes, truncated: false, content: "" };
+  }
+  const bytes = readFileSync(path);
+  const truncated = bytes.byteLength > maxBytes;
+  const content = (truncated ? bytes.subarray(Math.max(0, bytes.byteLength - maxBytes)) : bytes).toString("utf-8");
+  return { jobId, stream, maxBytes, truncated, content };
 }
 
 function saveJob(repoRoot: string, job: LocalBridgeJob): LocalBridgeJob {
@@ -803,6 +993,162 @@ async function executeRunCheck(
   }
 }
 
+async function executeVerifyEditSession(
+  repoRoot: string,
+  jobId: string,
+  payload: VerifyEditSessionPayload,
+): Promise<void> {
+  let job = tryReadLocalBridgeJob(repoRoot, jobId);
+  if (!job || job.status !== "running") return;
+  const timeoutMs = resolvedJobTimeout(repoRoot, undefined);
+  job.ownerPid = process.pid;
+  job.deadlineAt = new Date(Date.now() + timeoutMs + 5_000).toISOString();
+  saveJob(repoRoot, job);
+  appendEvent(repoRoot, job.jobId, {
+    type: "job_progress",
+    message: `Verifying edit session ${payload.sessionId}.`,
+    data: { sessionId: payload.sessionId, revision: payload.revision },
+  });
+  try {
+    const session = await verifyEditSessionAsync(repoRoot, payload.sessionId, {
+      checkIds: payload.checkIds,
+      reviewer: payload.reviewer,
+      note: payload.note,
+    }, {
+      onCheckSpawn: (checkId, pid) => {
+        const current = tryReadLocalBridgeJob(repoRoot, jobId);
+        if (!current || current.status !== "running") {
+          signalWorker(pid, "SIGTERM");
+          return;
+        }
+        current.workerPid = pid;
+        current.ownerPid = process.pid;
+        current.heartbeatAt = now();
+        saveJob(repoRoot, current);
+        appendEvent(repoRoot, current.jobId, {
+          type: "job_progress",
+          message: `Running check ${checkId}.`,
+          data: { checkId, pid },
+        });
+      },
+    });
+    job = tryReadLocalBridgeJob(repoRoot, jobId);
+    if (!job || job.status !== "running") return;
+    job.status = session.status === "checked" ? "succeeded" : "failed";
+    job.finishedAt = now();
+    job.workerPid = undefined;
+    job.result = {
+      sessionId: session.sessionId,
+      status: session.status,
+      verifiedAt: session.verifiedAt,
+      checkResults: session.checkResults,
+      diffPath: session.diffPath,
+    };
+    if (job.status !== "succeeded") job.error = session.checkResults.find((entry) => !entry.ok)?.summary ?? "edit session verification failed";
+    appendEvent(repoRoot, job.jobId, {
+      type: job.status === "succeeded" ? "job_succeeded" : "job_failed",
+      message: job.status === "succeeded"
+        ? `Edit session ${payload.sessionId} verified.`
+        : `Edit session ${payload.sessionId} verification failed.`,
+      data: { sessionId: payload.sessionId, revision: payload.revision },
+    });
+    saveJob(repoRoot, job);
+  } catch (error) {
+    job = tryReadLocalBridgeJob(repoRoot, jobId);
+    if (!job || job.status !== "running") return;
+    markJobTerminal(repoRoot, job, "failed", error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function executeRepositoryCommand(
+  repoRoot: string,
+  jobId: string,
+  payload: RepositoryCommandPayload,
+): Promise<void> {
+  let job = tryReadLocalBridgeJob(repoRoot, jobId);
+  if (!job || job.status !== "running") return;
+  const timeoutMs = resolvedJobTimeout(repoRoot, payload.timeoutMs);
+  job.ownerPid = process.pid;
+  job.deadlineAt = new Date(Date.now() + timeoutMs + 5_000).toISOString();
+  saveJob(repoRoot, job);
+  appendEvent(repoRoot, job.jobId, {
+    type: "job_progress",
+    message: `Executing repository command for ${payload.repoId}.`,
+    data: { repoId: payload.repoId, checkoutId: payload.checkoutId },
+  });
+  try {
+    const repository = resolveRepositorySelection({
+      repoId: payload.repoId,
+      checkoutId: payload.checkoutId,
+      controllerHome: payload.controllerHome,
+      allowSoleRepository: true,
+    });
+    const execution = await withControllerLockAsync(
+      payload.controllerHome,
+      { scope: "repository", repoId: repository.repoId },
+      "local-bridge:repository-command",
+      () => executeRepositoryCommandAsync(payload.controllerHome, repository, {
+        command: payload.command,
+        cwd: payload.cwd,
+        authorization: "confirmed_plan",
+        approvalToken: payload.approvalToken,
+        timeoutMs: payload.timeoutMs,
+        maxOutputBytes: payload.maxOutputBytes,
+      }, {
+        onSpawn: (pid) => {
+          const current = tryReadLocalBridgeJob(repoRoot, jobId);
+          if (!current || current.status !== "running") {
+            signalWorker(pid, "SIGTERM");
+            return;
+          }
+          current.workerPid = pid;
+          current.ownerPid = process.pid;
+          current.heartbeatAt = now();
+          saveJob(repoRoot, current);
+        },
+        onStdout: (chunk) => {
+          appendJobOutput(repoRoot, jobId, "stdout", chunk);
+          const current = tryReadLocalBridgeJob(repoRoot, jobId);
+          if (!current || current.status !== "running") return;
+          current.heartbeatAt = now();
+          saveJob(repoRoot, current);
+        },
+        onStderr: (chunk) => {
+          appendJobOutput(repoRoot, jobId, "stderr", chunk);
+          const current = tryReadLocalBridgeJob(repoRoot, jobId);
+          if (!current || current.status !== "running") return;
+          current.heartbeatAt = now();
+          saveJob(repoRoot, current);
+        },
+      }),
+    );
+    job = tryReadLocalBridgeJob(repoRoot, jobId);
+    if (!job || job.status !== "running") return;
+    job.status = execution.ok ? "succeeded" : execution.timedOut ? "timed_out" : "failed";
+    job.finishedAt = now();
+    job.workerPid = undefined;
+    job.result = execution as unknown as Record<string, unknown>;
+    job.result = {
+      ...job.result,
+      stdoutPath: `.ai/harness/local-jobs/${job.jobId}/stdout.log`,
+      stderrPath: `.ai/harness/local-jobs/${job.jobId}/stderr.log`,
+    };
+    job.error = execution.ok ? undefined : execution.stderr || `repository command exited with ${String(execution.exitCode ?? 1)}`;
+    appendEvent(repoRoot, job.jobId, {
+      type: job.status === "succeeded" ? "job_succeeded" : "job_failed",
+      message: job.status === "succeeded"
+        ? `Repository command completed for ${payload.repoId}.`
+        : `Repository command failed for ${payload.repoId}.`,
+      data: { repoId: payload.repoId, exitCode: execution.exitCode, timedOut: execution.timedOut },
+    });
+    saveJob(repoRoot, job);
+  } catch (error) {
+    job = tryReadLocalBridgeJob(repoRoot, jobId);
+    if (!job || job.status !== "running") return;
+    markJobTerminal(repoRoot, job, "failed", error instanceof Error ? error.message : String(error));
+  }
+}
+
 export function executeLocalBridgeJob(
   repoRoot: string,
   jobId: string,
@@ -829,7 +1175,9 @@ export function executeLocalBridgeJob(
         job,
         job.payload as QuickAgentSessionPayload,
       );
-    else void executeRunCheck(repoRoot, job.jobId, job.payload as RunCheckPayload);
+    else if (job.action === "run-check") void executeRunCheck(repoRoot, job.jobId, job.payload as RunCheckPayload);
+    else if (job.action === "verify-edit-session") void executeVerifyEditSession(repoRoot, job.jobId, job.payload as VerifyEditSessionPayload);
+    else void executeRepositoryCommand(repoRoot, job.jobId, job.payload as RepositoryCommandPayload);
   } catch (error) {
     job.status = "failed";
     job.error = error instanceof Error ? error.message : String(error);
@@ -840,7 +1188,7 @@ export function executeLocalBridgeJob(
       message: job.error,
     });
   }
-  return job.action === "run-check"
+  return ["run-check", "verify-edit-session", "repository-command"].includes(job.action)
     ? readLocalBridgeJob(repoRoot, job.jobId)
     : saveJob(repoRoot, job);
 }

@@ -61,12 +61,24 @@ export interface RepositoryCommandExecution {
   repositoryChanged?: boolean;
 }
 
+export interface PreparedRepositoryCommandExecution {
+  before: RepositoryCommandSnapshot;
+  executable: boolean;
+  execution: RepositoryCommandExecution;
+}
+
 interface SpawnCommandResult {
   ok: boolean;
   exitCode: number;
   timedOut: boolean;
   stdout: string;
   stderr: string;
+}
+
+export interface RepositoryCommandAsyncHooks {
+  onSpawn?: (pid: number) => void;
+  onStdout?: (chunk: string) => void;
+  onStderr?: (chunk: string) => void;
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -138,6 +150,7 @@ async function runShellCommand(
   cwd: string,
   timeoutMs: number,
   maxOutputBytes: number,
+  hooks: RepositoryCommandAsyncHooks = {},
 ): Promise<SpawnCommandResult> {
   const shell = process.platform === 'win32' ? 'cmd.exe' : '/bin/sh';
   const shellArgs = process.platform === 'win32' ? ['/d', '/s', '/c', command] : ['-c', command];
@@ -150,6 +163,7 @@ async function runShellCommand(
       env: commandEnvironment(),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    if (child.pid) hooks.onSpawn?.(child.pid);
     let settled = false;
     let timedOut = false;
     let spawnError = '';
@@ -180,8 +194,14 @@ async function runShellCommand(
     }, timeoutMs);
     timeoutHandle.unref();
 
-    child.stdout?.on('data', (chunk) => stdoutCollector.write(chunk));
-    child.stderr?.on('data', (chunk) => stderrCollector.write(chunk));
+    child.stdout?.on('data', (chunk) => {
+      stdoutCollector.write(chunk);
+      hooks.onStdout?.(chunk.toString());
+    });
+    child.stderr?.on('data', (chunk) => {
+      stderrCollector.write(chunk);
+      hooks.onStderr?.(chunk.toString());
+    });
     child.on('error', (error) => {
       spawnError = error.message;
     });
@@ -256,6 +276,52 @@ function snapshotChanged(before: RepositoryCommandSnapshot, after: RepositoryCom
     || before.refsHash !== after.refsHash;
 }
 
+function prepareRepositoryCommandExecution(
+  repository: RepositoryRecord,
+  input: ExecuteRepositoryCommandInput,
+): { root: string; cwd: string; command: string; timeoutMs: number; maxOutputBytes: number; execution: RepositoryCommandExecution; executable: boolean } {
+  const { root, cwd, relativeCwd } = resolveRepositoryCommandCwd(repository, input.cwd);
+  const command = assertRepositoryCommandAllowed(input.command);
+  assertCommandPathOperandsStayInRepository(command, cwd, root);
+  const classification = classifyRepositoryCommand(command, repository.defaultBranch);
+  const before = repositorySnapshot(root);
+  const token = approvalToken(repository, relativeCwd, command, classification, before);
+  const execution: RepositoryCommandExecution = {
+    status: input.dryRun === true ? 'preview' : 'approval_required',
+    repoId: repository.repoId,
+    checkoutId: repository.activeCheckoutId,
+    cwd: relativeCwd,
+    command: redactProcessOutput(command),
+    classification,
+    approvalToken: token,
+    authorization: input.authorization,
+    before,
+  };
+  const confirmed = input.authorization === 'confirmed_plan' && input.approvalToken === token;
+  const executable = input.dryRun === true || classification.risk === 'readonly' || confirmed;
+  return {
+    root,
+    cwd,
+    command,
+    timeoutMs: boundedInteger(input.timeoutMs, DEFAULT_TIMEOUT_MS, 1_000, MAX_TIMEOUT_MS),
+    maxOutputBytes: boundedInteger(input.maxOutputBytes, DEFAULT_MAX_OUTPUT_BYTES, 1_024, MAX_OUTPUT_BYTES),
+    before,
+    execution,
+    executable,
+  };
+}
+
+export function previewRepositoryCommandExecution(
+  repository: RepositoryRecord,
+  input: ExecuteRepositoryCommandInput,
+): PreparedRepositoryCommandExecution {
+  const prepared = prepareRepositoryCommandExecution(repository, input);
+  return {
+    executable: prepared.executable,
+    execution: prepared.execution,
+  };
+}
+
 function auditCommand(
   controllerHome: string,
   repository: RepositoryRecord,
@@ -276,38 +342,18 @@ export function executeRepositoryCommand(
   repository: RepositoryRecord,
   input: ExecuteRepositoryCommandInput,
 ): RepositoryCommandExecution {
-  const { root, cwd, relativeCwd } = resolveRepositoryCommandCwd(repository, input.cwd);
-  const command = assertRepositoryCommandAllowed(input.command);
-  assertCommandPathOperandsStayInRepository(command, cwd, root);
-  const classification = classifyRepositoryCommand(command, repository.defaultBranch);
-  const before = repositorySnapshot(root);
-  const token = approvalToken(repository, relativeCwd, command, classification, before);
-  const base: RepositoryCommandExecution = {
-    status: input.dryRun === true ? 'preview' : 'approval_required',
-    repoId: repository.repoId,
-    checkoutId: repository.activeCheckoutId,
-    cwd: relativeCwd,
-    command: redactProcessOutput(command),
-    classification,
-    approvalToken: token,
-    authorization: input.authorization,
-    before,
-  };
+  const prepared = prepareRepositoryCommandExecution(repository, input);
+  const { root, cwd, command, timeoutMs, maxOutputBytes, before, execution: base, executable } = prepared;
 
   if (input.dryRun === true) {
     auditCommand(controllerHome, repository, base);
     return base;
   }
 
-  const confirmed = input.authorization === 'confirmed_plan' && input.approvalToken === token;
-  const canExecute = classification.risk === 'readonly' || confirmed;
-  if (!canExecute) {
+  if (!executable) {
     auditCommand(controllerHome, repository, base);
     return base;
   }
-
-  const timeoutMs = boundedInteger(input.timeoutMs, DEFAULT_TIMEOUT_MS, 1_000, MAX_TIMEOUT_MS);
-  const maxOutputBytes = boundedInteger(input.maxOutputBytes, DEFAULT_MAX_OUTPUT_BYTES, 1_024, MAX_OUTPUT_BYTES);
   const shell = process.platform === 'win32' ? 'cmd.exe' : '/bin/sh';
   const shellArgs = process.platform === 'win32' ? ['/d', '/s', '/c', command] : ['-c', command];
   const result = spawnSync(shell, shellArgs, {
@@ -346,40 +392,21 @@ export async function executeRepositoryCommandAsync(
   controllerHome: string,
   repository: RepositoryRecord,
   input: ExecuteRepositoryCommandInput,
+  hooks: RepositoryCommandAsyncHooks = {},
 ): Promise<RepositoryCommandExecution> {
-  const { root, cwd, relativeCwd } = resolveRepositoryCommandCwd(repository, input.cwd);
-  const command = assertRepositoryCommandAllowed(input.command);
-  assertCommandPathOperandsStayInRepository(command, cwd, root);
-  const classification = classifyRepositoryCommand(command, repository.defaultBranch);
-  const before = repositorySnapshot(root);
-  const token = approvalToken(repository, relativeCwd, command, classification, before);
-  const base: RepositoryCommandExecution = {
-    status: input.dryRun === true ? 'preview' : 'approval_required',
-    repoId: repository.repoId,
-    checkoutId: repository.activeCheckoutId,
-    cwd: relativeCwd,
-    command: redactProcessOutput(command),
-    classification,
-    approvalToken: token,
-    authorization: input.authorization,
-    before,
-  };
+  const prepared = prepareRepositoryCommandExecution(repository, input);
+  const { root, cwd, command, timeoutMs, maxOutputBytes, before, execution: base, executable } = prepared;
 
   if (input.dryRun === true) {
     auditCommand(controllerHome, repository, base);
     return base;
   }
 
-  const confirmed = input.authorization === 'confirmed_plan' && input.approvalToken === token;
-  const canExecute = classification.risk === 'readonly' || confirmed;
-  if (!canExecute) {
+  if (!executable) {
     auditCommand(controllerHome, repository, base);
     return base;
   }
-
-  const timeoutMs = boundedInteger(input.timeoutMs, DEFAULT_TIMEOUT_MS, 1_000, MAX_TIMEOUT_MS);
-  const maxOutputBytes = boundedInteger(input.maxOutputBytes, DEFAULT_MAX_OUTPUT_BYTES, 1_024, MAX_OUTPUT_BYTES);
-  const result = await runShellCommand(command, cwd, timeoutMs, maxOutputBytes);
+  const result = await runShellCommand(command, cwd, timeoutMs, maxOutputBytes, hooks);
   const after = repositorySnapshot(root);
   const execution: RepositoryCommandExecution = {
     ...base,

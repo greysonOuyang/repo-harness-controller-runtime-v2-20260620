@@ -713,7 +713,7 @@
       "id": "T15",
       "title": "建立活跃检查索引并限制历史扫描",
       "objective": "将 run-check 去重与活跃状态读取从最近历史窗口中分离，优先读取非终态索引；历史列表只按请求上限读取，不因检查去重扫描大量旧 Job。",
-      "status": "running",
+      "status": "blocked",
       "dependsOn": [
         "T2"
       ],
@@ -753,14 +753,15 @@
         "活跃索引补丁准备落盘。",
         "空 Issue 已取消，继续落 T15 补丁。",
         "准备应用代码变更。",
-        "开始写入活跃索引实现。"
+        "开始写入活跃索引实现。",
+        "RUN-iss-20260624-6732ee-t15-1782369756284-8305ffe4 remains recorded as cancelled; explicit retry is required and no new Run was created."
       ],
       "runIds": [
         "RUN-iss-20260624-6732ee-t15-1782369359087-6b019f0b",
         "RUN-iss-20260624-6732ee-t15-1782369756284-8305ffe4"
       ],
       "createdAt": "2026-06-25T00:44:23.319Z",
-      "updatedAt": "2026-06-25T07:14:30.762Z",
+      "updatedAt": "2026-06-25T08:45:19.079Z",
       "repoId": "repo_123b7cf58b6b17b5cbe46a56"
     },
     {
@@ -800,6 +801,6 @@
     }
   ],
   "createdAt": "2026-06-24T08:57:01.690Z",
-  "updatedAt": "2026-06-25T08:03:17.248Z",
+  "updatedAt": "2026-06-25T08:45:19.079Z",
   "repoId": "repo_123b7cf58b6b17b5cbe46a56"
 }

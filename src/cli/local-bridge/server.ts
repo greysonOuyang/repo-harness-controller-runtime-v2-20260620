@@ -66,7 +66,6 @@ import {
   getEditSessionDiff,
   listEditSessions,
   rollbackEditSession,
-  verifyEditSession,
 } from "../editing/edit-session";
 import { localBridgeDashboardHtml } from "./dashboard";
 import type { LocalBridgeJobRequest } from "./types";
@@ -738,11 +737,27 @@ export async function startLocalBridgeServer(
   });
   app.post("/api/edit-sessions/:sessionId/verify", (request, response) => {
     try {
-      response.json(verifyEditSession(options.repoRoot, request.params.sessionId, {
-        checkIds: Array.isArray(request.body?.checkIds) ? request.body.checkIds.map(String) : undefined,
-        reviewer: queryString(request.body?.reviewer) ?? "local-controller-human",
-        note: queryString(request.body?.note),
-      }));
+      const session = getEditSession(options.repoRoot, request.params.sessionId);
+      const job = submitLocalBridgeJob(options.repoRoot, {
+        action: "verify-edit-session",
+        requestedBy: "local-controller",
+        payload: {
+          sessionId: session.sessionId,
+          revision: session.currentRevision,
+          requestId: queryString(request.body?.requestId),
+          checkIds: Array.isArray(request.body?.checkIds) ? request.body.checkIds.map(String) : undefined,
+          reviewer: queryString(request.body?.reviewer) ?? "local-controller-human",
+          note: queryString(request.body?.note),
+        },
+      });
+      if (job.status === "approved") asyncExecute(options.repoRoot, job.jobId);
+      response.status(202).json({
+        accepted: true,
+        jobId: job.jobId,
+        status: job.status,
+        sessionId: session.sessionId,
+        revision: session.currentRevision,
+      });
     } catch (error) {
       response.status(400).json({ error: errorMessage(error) });
     }

@@ -1,0 +1,151 @@
+# Current Controller Runtime Architecture
+
+> **Runtime Authority** — this directory is the approved architecture source for repo-harness Controller Runtime.
+
+## Purpose
+
+This directory defines the architecture that implementation work must converge toward. It exists to prevent runtime behavior from being inferred from whichever V5, V6, V7, V8, plan, research report, or Issue happens to be read first.
+
+repo-harness is designed as an **Agent Engineering Control Plane**:
+
+```text
+Thin Gateway
+  -> Global Control Plane
+     -> Per-Repository Actor
+        -> Durable Job Queue
+           -> Isolated Worker
+              -> Evidence Plane
+```
+
+The architecture is both technical and operational. It defines not only modules and processes, but also:
+
+- who may decide;
+- who may execute;
+- how work is persisted and recovered;
+- when tasks may run concurrently;
+- what counts as a conflict;
+- how multiple repositories share system resources;
+- how scheduled work remains bounded;
+- what evidence is required before completion or release.
+
+## Authority Statement
+
+The documents in this directory are the sole architecture authority for the current Controller Runtime.
+
+They do **not** claim that every target capability is already implemented. Every normative document must label material statements using one of these states:
+
+### Current Implementation
+
+Verified behavior that exists in code, tests, persisted schemas, or observable runtime state.
+
+Use this label only when a repository path or executable check can support the claim.
+
+### Target Architecture
+
+Approved behavior that future implementation must converge toward.
+
+A Target Architecture statement is a requirement, not proof of completion.
+
+### Migration Rule
+
+A rule that protects correctness, compatibility, or recoverability while Current Implementation differs from Target Architecture.
+
+Migration Rules remain binding until the implementation reaches the target or an ADR supersedes them.
+
+## Reading Order
+
+Read the architecture in this order:
+
+1. `system-overview.md` — boundary, layers, and process topology.
+2. `architecture-invariants.md` — non-negotiable rules.
+3. `entity-model.md` — durable entity meanings and ownership.
+4. `job-and-run-lifecycle.md` — execution, retry, cancellation, and terminal-state semantics.
+5. `dispatch-and-agent-strategy.md` — selection of Direct Edit, Quick Agent, durable Tasks, and Agent roles.
+6. `scheduler-and-resource-claims.md` — repository actors, claims, leases, workspace conflicts, and integration queues.
+7. `multi-repository-execution.md` — cross-repository quotas, fairness, DAGs, and failure isolation.
+8. `automation-and-schedule-engine.md` — schedules, bounded occurrences, deduplication, budgets, and stop conditions.
+9. `failure-recovery.md` — Gateway, Controller, Worker, orphan, stale, timeout, and reconciliation behavior.
+10. `verification-and-release-gates.md` — exact-revision verification, acceptance, release freeze, and human authorization.
+11. `migration-roadmap.md` — implementation order and evidence gates.
+12. `governance.md` — ownership, ADR, drift, and maintenance rules.
+
+Documents are added through `ISS-20260625-BBFD4B`. A missing document is an explicit governance gap; readers must not substitute a historical version document as current authority.
+
+## Architecture Layers
+
+The approved top-level layers are:
+
+| Layer | Primary responsibility | Must not own |
+| --- | --- | --- |
+| Thin Gateway | Authentication, validation, routing, compact reads, durable command acceptance | Long execution, Agent lifetime, heavy checks |
+| Global Control Plane | Repository registry, global quotas, portfolio scheduling | Repository-local workflow mutation |
+| Per-Repository Actor | Repository-local ordering, claims, conflict decisions, integration and release coordination | Cross-repository global locks |
+| Workflow Plane | Issue, Task, Schedule, Occurrence intent and dependency state | Process lifetime and raw logs |
+| Durable Execution Plane | Job acceptance, dispatch, Run attempts, commands, checks, workers | Product acceptance decisions |
+| Workspace Plane | Workspace/worktree allocation, Git integration, resource leases | Business intent |
+| Evidence Plane | Diffs, checks, logs, artifacts, verification and release evidence | Scheduling policy |
+| Projection Plane | Compact snapshots, indexes, dashboard and MCP read models | Source-of-truth state mutation |
+
+## Source-of-Truth Rules
+
+- Issue and Task files own durable work intent.
+- Jobs own asynchronous system-operation state.
+- Runs own individual Agent execution attempts.
+- Edit Sessions own transactional direct modifications.
+- Verification records own exact-revision completion evidence.
+- Event logs own audit history.
+- Atomic snapshots and indexes are projections optimized for reads and recovery.
+- Chat history, UI state, worker self-reports, and in-memory maps are never durable truth.
+
+## Historical Documents
+
+Versioned design documents are preserved because they explain migrations and compatibility decisions. They must be treated as:
+
+```text
+Historical Design
+Not Runtime Authority
+```
+
+They may describe behavior that still exists, behavior that was removed, or behavior not yet migrated. Their content does not override this directory.
+
+Historical documents should link here rather than being rewritten to look current. This preserves evidence and prevents architecture history from becoming indistinguishable from architecture truth.
+
+## Change Discipline
+
+A change requires architecture review when it modifies any of the following:
+
+- process or service boundaries;
+- authority or ownership of state;
+- entity meanings or lifecycle transitions;
+- task dispatch or Agent-selection behavior;
+- concurrency, conflict, claim, lease, or integration semantics;
+- multi-repository isolation or fairness;
+- schedule, retry, budget, or stop-condition behavior;
+- verification, acceptance, release, or destructive-operation boundaries;
+- public MCP execution contracts or durable schema compatibility.
+
+The expected sequence is:
+
+```text
+request or ADR
+  -> current architecture update
+     -> implementation Task
+        -> executable verification
+           -> architecture drift check
+```
+
+Implementation may precede the documentation update only for an urgent incident fix. In that case the change must record a temporary architecture drift item with an owner and closure condition.
+
+## Completion Standard
+
+The architecture baseline is complete only when:
+
+- every required document exists;
+- terms have one meaning across documents;
+- Current Implementation and Target Architecture are distinguishable;
+- every normative invariant has an implementation owner or migration item;
+- historical documents are visibly non-authoritative;
+- automated checks protect the document set and authority markers;
+- future Issues can cite these documents instead of reconstructing strategy from conversation history.
+
+See [Architecture Governance Contract](governance.md).

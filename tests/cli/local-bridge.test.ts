@@ -748,7 +748,14 @@ printf '%s\n' '{"type":"turn.completed"}'
       headers: { ...headers, "content-type": "application/json" },
       body: JSON.stringify({ reviewer: "local-test" }),
     }).then((response) => response.json());
-    expect(verified.status).toBe("checked");
+    expect(verified.accepted).toBe(true);
+    expect(typeof verified.jobId).toBe("string");
+    let verificationJob = getLocalBridgeJob(root, verified.jobId);
+    for (let attempt = 0; attempt < 120 && ["approved", "running"].includes(verificationJob.status); attempt += 1) {
+      await Bun.sleep(25);
+      verificationJob = getLocalBridgeJob(root, verified.jobId);
+    }
+    expect(verificationJob.status).toBe("succeeded");
     const finalized = await fetch(new URL(`/api/edit-sessions/${session.sessionId}/finalize`, handle.url), {
       method: "POST",
       headers: { ...headers, "content-type": "application/json" },

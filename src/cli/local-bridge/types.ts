@@ -17,7 +17,9 @@ export type LocalBridgeJobStatus =
 export type LocalBridgeJobAction =
   | "launch-task"
   | "quick-agent-session"
-  | "run-check";
+  | "run-check"
+  | "verify-edit-session"
+  | "repository-command";
 
 export interface LaunchTaskPayload {
   issueId: string;
@@ -54,13 +56,37 @@ export interface QuickAgentSessionPayload {
 
 export interface RunCheckPayload {
   checkId: string;
+  requestId?: string;
   timeoutMs?: number;
+}
+
+export interface VerifyEditSessionPayload {
+  sessionId: string;
+  revision: number;
+  requestId?: string;
+  checkIds?: string[];
+  reviewer?: string;
+  note?: string;
+}
+
+export interface RepositoryCommandPayload {
+  controllerHome: string;
+  repoId: string;
+  checkoutId?: string;
+  requestId?: string;
+  command: string;
+  cwd?: string;
+  approvalToken?: string;
+  timeoutMs?: number;
+  maxOutputBytes?: number;
 }
 
 export type LocalBridgeJobPayload =
   | LaunchTaskPayload
   | QuickAgentSessionPayload
-  | RunCheckPayload;
+  | RunCheckPayload
+  | VerifyEditSessionPayload
+  | RepositoryCommandPayload;
 
 export interface LocalBridgeJobRequest {
   action: LocalBridgeJobAction;
@@ -75,6 +101,7 @@ export interface LocalBridgeJobEvent {
     | "job_approved"
     | "job_started"
     | "job_dispatched"
+    | "job_progress"
     | "job_succeeded"
     | "job_failed"
     | "job_cancelled"
@@ -105,6 +132,7 @@ export interface LocalBridgeJob {
   ownerPid?: number;
   workerPid?: number;
   deadlineAt?: string;
+  heartbeatAt?: string;
   ephemeral?: boolean;
   cleanupAt?: string;
 }

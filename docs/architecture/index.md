@@ -1,92 +1,105 @@
 # Architecture Index
 
-> Umbrella architecture ledger for current boundaries, drift requests, snapshots, and diagrams.
+> Controller Runtime architecture entry point.
 
-## Current Snapshot
+## Runtime Authority
 
-- Latest snapshot: [repo-harness plugin review](snapshots/2026-05-25-repo-harness-plugin-review.md) (2026-05-25)
-- Latest semantic diagram: [repo-harness plugin review Mermaid](snapshots/2026-05-25-repo-harness-plugin-review.md#semantic-diagram) (2026-05-25)
-- Latest human diagram: [repo-harness plugin architecture](diagrams/agentic-dev-plugin-architecture.html) (2026-05-25)
-- Runtime hook adapter semantic diagram: [hook adapter workflow Mermaid](modules/runtime-harness/hook-adapters.md#semantic-diagram) (2026-05-30)
+**`docs/architecture/current/` is the only Runtime Authority for the current and target repo-harness Controller Runtime architecture.**
 
-## System Boundary
+Start here:
 
-`repo-harness` is a repo-local workflow harness skill. It is not a product
-runtime, agent gateway, database service, or MCP server. Its job is to inspect a
-target repository, install or refresh a file-backed workflow contract, route
-public command skills, and verify that the generated repo-local surfaces remain
-consistent.
+- [Current architecture map and reading order](current/README.md)
+- [Architecture governance contract](current/governance.md)
 
-Authoritative surfaces:
+When current implementation, a historical V5–V8 design document, a research note, and a document under `current/` disagree, the following precedence applies:
 
-- Public router: `SKILL.md`, `README.md`, `AGENTS.md`, `CLAUDE.md`.
-- Public command facades: `assets/skill-commands/*/SKILL.md` plus `assets/skill-commands/manifest.json`.
-- Engine: `scripts/inspect-project-state.ts`, `scripts/migrate-project-template.sh`, `scripts/migrate-workflow-docs.ts`, `scripts/create-project-dirs.sh`, `scripts/lib/project-init-lib.sh`, and the [Transactional Adoption Planner](transactional-adoption-planner.md).
-- Contract assets: `assets/workflow-contract.v1.json`, `.ai/harness/workflow-contract.json`, `.ai/harness/policy.json`, `.ai/context/context-map.json`, `.ai/context/capabilities.json`.
-- Runtime harness: `assets/hooks/`, `.ai/hooks/`, user-level host adapters, and ignored `.ai/harness/*` runtime state.
-- Verification: `tests/`, `evals/`, `scripts/check-task-workflow.sh`, `scripts/check-task-sync.sh`, `scripts/check-agent-tooling.sh`, `scripts/ensure-codegraph.sh`, `scripts/check-brain-manifest.sh`, `scripts/sync-brain-docs.sh`.
+1. executable code and persisted schemas describe **Current Implementation** facts;
+2. `docs/architecture/current/` defines the approved **Target Architecture** and mandatory **Migration Rules**;
+3. accepted ADRs may amend the target architecture until their conclusions are merged into `current/`;
+4. versioned design documents, snapshots, plans, research reports, and diagrams are historical or exploratory evidence only.
 
-Out of scope:
+A target rule is not evidence that the implementation already satisfies it. Every current architecture document must distinguish:
 
-- Product application scaffolds after their first generated skeleton.
-- `_ref/` external reference checkouts and `_ops/` private operations state.
-- Installing, upgrading, or enabling external host tools such as Waza, gstack, gbrain, or MCP servers. This self-host repo may vendor CodeGraph as a dev dependency, but generated downstream repos keep CodeGraph host setup explicit unless local policy opts in.
-- Vendoring external skill bodies such as `mermaid`.
+- **Current Implementation** — behavior verified in code, tests, or persisted schemas;
+- **Target Architecture** — the approved end state that future work must converge toward;
+- **Migration Rule** — constraints that apply while moving from the current implementation to the target.
 
-## Umbrella Hierarchy
+## Current Controller Runtime Scope
 
-```text
-Project
-  -> architecture domain
-     -> capability
-        -> capability contract block
-        -> workstream ledger
-        -> current todo slice
-        -> source plan
-```
+repo-harness is a repository engineering control plane. It includes:
 
-- Architecture owns stable truth: boundaries, snapshots, embedded Mermaid, and optional rendered diagrams.
-- `.ai/context/capabilities.json` owns declared capability prefixes and longest-prefix matching.
-- Local `AGENTS.md` / `CLAUDE.md` contract blocks own agent-facing context projection.
-- `tasks/workstreams/<domain>/<capability>/` owns durable multi-session progress.
-- `tasks/todos.md` owns deferred medium/long-term goals with tradeoff and revisit trigger; current execution slices stay in the active plan's `## Task Breakdown`.
+- MCP and local UI entry points;
+- a multi-repository registry and per-repository runtime storage;
+- Issue, Task, Job, Run, Direct Edit, Verification, and evidence lifecycles;
+- optional Codex, Claude, and GitHub Copilot execution;
+- workspace and worktree isolation, integration, checks, recovery, and governance;
+- future schedule-driven bounded occurrences and cross-repository orchestration.
 
-## Domains
+It is not the product runtime of the repositories it manages. It must not replace repository-owned build, test, deployment, or release systems as the final authority.
 
-- [Public Surface](domains/public-surface.md): root router, README, root agent docs, and action command facades.
-- [Workflow Engine](domains/workflow-engine.md): inspection, migration, template install, contract assets, and policy/context generation.
-- [Runtime Harness](domains/runtime-harness.md): generated hook implementation, user-level adapter settings, handoff, and runtime event state.
-- [Verification](domains/verification.md): unit tests, smoke checks, eval fixtures, CodeGraph readiness, and advisory tooling probes.
+## Architecture Document Classes
 
-## Architecture Drift Flow
+| Class | Location | Authority |
+| --- | --- | --- |
+| Current architecture | `docs/architecture/current/` | Runtime Authority |
+| Architecture decisions | `docs/architecture/decisions/` | Binding until merged or superseded |
+| Pending drift requests | `docs/architecture/requests/` | Proposed change only |
+| Architecture snapshots | `docs/architecture/snapshots/` | Historical evidence |
+| Versioned V5–V8 documents | `docs/repo-harness-*.md` | Historical Design / Not Runtime Authority |
+| Research reports | `docs/researches/` | Hypothesis and supporting evidence |
+| Plans and task records | `plans/`, `tasks/` | Execution intent and progress, not architecture authority |
+| Diagrams | `docs/architecture/diagrams/` | Explanatory projection; semantic Markdown source wins |
 
-- `scripts/architecture-queue.sh` records architecture-sensitive edits as requests.
-- `scripts/capability-resolver.ts` resolves changed paths to capabilities with longest-prefix matching.
-- `scripts/archive-architecture-request.sh` archives handled requests after an agent records the resolution status and linked artifacts.
-- `scripts/context-contract-sync.sh` keeps only the controlled architecture block in capability `AGENTS.md` and `CLAUDE.md` files aligned.
-- `scripts/workstream-sync.sh` keeps durable multi-session progress under `tasks/workstreams/<domain>/<capability>/` and projects only pointers into local contracts.
-- Semantic diagrams live as Mermaid fenced blocks in the relevant architecture module or snapshot Markdown.
-- Human-readable diagrams are optional standalone HTML files in `docs/architecture/diagrams/`; when generated by an agent, use the `mermaid` architecture type, keep the diagram self-contained, and link it back to the Markdown semantic source.
-- `mermaid` is an external installed skill dependency (`~/.codex/skills/mermaid`), not vendored architecture code.
+## Current Architecture Set
 
-## Request Archive Rule
+The current set is introduced incrementally under governance Issue `ISS-20260625-BBFD4B`. The completed baseline will contain:
 
-- `docs/architecture/requests/` contains only pending architecture drift requests.
-- Handled requests move to `docs/architecture/requests/archive/YYYY/`.
-- Valid terminal statuses are `Resolved`, `Superseded`, `Rejected`, and `No architecture change`.
-- The archived request must link any produced module, snapshot, embedded Mermaid source, or human diagram artifact.
-- `docs/architecture/index.md` keeps only pending request links.
+- `README.md` — map, status labels, and reading order;
+- `governance.md` — authority, ownership, ADR, and drift rules;
+- `system-overview.md` — system boundary and process topology;
+- `architecture-invariants.md` — rules implementations must not violate;
+- `entity-model.md` — Issue, Task, Job, Run, Edit Session, Verification, Schedule, Occurrence, Claim, and Lease semantics;
+- `job-and-run-lifecycle.md` — durable execution and retry state machines;
+- `dispatch-and-agent-strategy.md` — Direct Edit, Quick Agent, durable Task, and role selection;
+- `scheduler-and-resource-claims.md` — repository actors, resource claims, leases, and conflict behavior;
+- `multi-repository-execution.md` — quotas, fairness, failure isolation, and portfolio workflows;
+- `automation-and-schedule-engine.md` — bounded occurrences, budgets, backoff, deduplication, and stop conditions;
+- `failure-recovery.md` — process boundaries, orphan handling, reconciliation, and fencing;
+- `verification-and-release-gates.md` — exact-revision evidence, integration gates, release freeze, and human authorization;
+- `migration-roadmap.md` — evidence-driven implementation convergence order.
 
-## Pending Requests
+Until a listed document is created, the rule must be recorded in an accepted Issue/ADR and must not be inferred from a historical version document.
 
+## Architecture Change Flow
+
+1. Identify whether the proposed change alters a boundary, entity semantic, lifecycle, resource rule, safety invariant, or public execution contract.
+2. Record the change as an architecture request or ADR before implementation when the answer is yes.
+3. Update the affected `current/` documents in the same change or explicitly record the temporary drift and its owner.
+4. Update tests and architecture checks that enforce the changed rule.
+5. Mark superseded version documents as historical; never silently rewrite them into current truth.
+6. Close the request only after the current architecture and executable behavior no longer contradict each other, or the difference is explicitly labeled as a migration gap.
+
+See [Architecture governance contract](current/governance.md) for the full rule.
+
+## Existing Domain Documentation
+
+The following domain pages describe the earlier repo-local workflow-harness architecture. They remain useful implementation history but are not the current Controller Runtime authority:
+
+- [Public Surface](domains/public-surface.md)
+- [Workflow Engine](domains/workflow-engine.md)
+- [Runtime Harness](domains/runtime-harness.md)
+- [Verification](domains/verification.md)
+- [Transactional Adoption Planner](transactional-adoption-planner.md)
+- [Global Hook Runtime](global-hook-runtime.md)
+
+## Pending Architecture Requests
 
 <!-- BEGIN ARCHITECTURE PENDING REQUESTS -->
 - (none)
 <!-- END ARCHITECTURE PENDING REQUESTS -->
 
-
-
 ## Review Backlog
 
-- Treat user-level `~/.codex/hooks.json` and `~/.claude/settings.json` as host adapters. Keep hook implementation under `.ai/hooks/`, and treat repo-local `.claude/settings.json` / `.codex/hooks.json` hook adapters as retired legacy config.
-- Consider adding `bun scripts/capability-resolver.ts validate --format text` to the strict workflow gate after the architecture registry has been used through one more real slice.
+- Migrate accepted Controller Runtime rules from historical V5–V8 documents into `current/` and mark those documents as Historical Design.
+- Add automated checks for required current documents, authority declarations, historical headers, terminology, and internal links.
+- Keep diagrams as projections of the Markdown semantic source; a diagram must not introduce architecture rules absent from `current/`.

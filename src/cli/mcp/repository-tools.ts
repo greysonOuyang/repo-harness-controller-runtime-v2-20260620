@@ -1,6 +1,6 @@
 import { bindRepositoryEntities } from '../repositories/entity-migration';
-import { executeRepositoryCommand, executeRepositoryCommandAsync } from '../repositories/command-executor';
-import { withControllerLock, withControllerLockAsync } from '../repositories/locks';
+import { executeRepositoryCommand, previewRepositoryCommandExecution } from '../repositories/command-executor';
+import { withControllerLock } from '../repositories/locks';
 import {
   disableRepository,
   getRepository,
@@ -14,6 +14,7 @@ import {
   validateRepository,
 } from '../repositories/registry';
 import { buildControllerWorkbench } from '../repositories/workbench';
+import { executeLocalBridgeJob, submitLocalBridgeJob } from '../local-bridge/job-store';
 import type { McpToolDefinition } from './tools';
 
 export interface RepositoryToolResult {
@@ -195,22 +196,43 @@ export async function callRepositoryTool(
           : typeof args.max_output_bytes === 'string'
             ? Number(args.max_output_bytes)
             : undefined;
-        const waitMs = Math.min(Math.max(Math.trunc(timeoutMs ?? 120_000) + 30_000, 60_000), 960_000);
-        const execution = await withControllerLockAsync(
-          controllerHome,
-          { scope: 'repository', repoId: repository.repoId },
-          'mcp:repository_command_execute',
-          () => executeRepositoryCommandAsync(controllerHome, repository, {
+        const preview = previewRepositoryCommandExecution(repository, {
+          command: String(args.command ?? ''),
+          cwd: typeof args.cwd === 'string' ? args.cwd : undefined,
+          authorization: 'confirmed_plan',
+          approvalToken: typeof args.approval_token === 'string' ? args.approval_token : undefined,
+          timeoutMs,
+          maxOutputBytes,
+        });
+        if (!preview.executable) {
+          return result(preview.execution as unknown as Record<string, unknown>);
+        }
+        const job = submitLocalBridgeJob(repository.canonicalRoot, {
+          action: 'repository-command',
+          requestedBy: 'mcp:repository_command_execute',
+          payload: {
+            controllerHome,
+            repoId: repository.repoId,
+            checkoutId: repository.activeCheckoutId,
+            requestId: typeof args.request_id === 'string' ? args.request_id.trim() || undefined : undefined,
             command: String(args.command ?? ''),
             cwd: typeof args.cwd === 'string' ? args.cwd : undefined,
-            authorization: 'confirmed_plan',
             approvalToken: typeof args.approval_token === 'string' ? args.approval_token : undefined,
             timeoutMs,
             maxOutputBytes,
-          }),
-          waitMs,
-        );
-        return result(execution as unknown as Record<string, unknown>);
+          },
+        });
+        const accepted = job.status === 'approved'
+          ? executeLocalBridgeJob(repository.canonicalRoot, job.jobId)
+          : job;
+        return result({
+          accepted: true,
+          repoId: repository.repoId,
+          checkoutId: repository.activeCheckoutId,
+          jobId: accepted.jobId,
+          status: accepted.status,
+          next: `Inspect Job ${accepted.jobId} with get_local_job.`,
+        });
       }
       default:
         return failure(new Error(`UNKNOWN_REPOSITORY_TOOL: ${name}`));
