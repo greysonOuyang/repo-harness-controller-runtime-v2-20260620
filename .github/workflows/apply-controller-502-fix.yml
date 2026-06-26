@@ -1,0 +1,384 @@
+name: Apply controller 502 fix
+
+on:
+  push:
+    branches:
+      - fix/controller-502-bounded-responses-20260626
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    env:
+      BUN_TEST_MAX_CONCURRENCY: "1"
+      BUN_TEST_TIMEOUT_MS: "180000"
+      BUN_TEST_ISOLATE_FILES: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+
+      - name: Apply bounded response patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          service_path = Path("src/cli/mcp/legacy-tool-service.ts")
+          service = service_path.read_text()
+
+          helper_anchor = '''function summarizeRunList(
+            repoRoot: string,
+            runs: Array<Record<string, unknown>>,
+            includePaths = false,
+          ): Array<Record<string, unknown>> {
+            return runs.map((run) => summarizeAgentRun(repoRoot, run, { includePaths, includeOutput: false }));
+          }
+          '''
+          helpers = r'''
+          type IssueEffectiveView = ReturnType<typeof getIssueEffectiveView>;
+          type TaskProgressDetail = ReturnType<typeof getTaskProgressDetail>;
+
+          function boundedText(value: unknown, maxChars: number): string | undefined {
+            if (typeof value !== "string" || value.length === 0) return undefined;
+            return value.length <= maxChars ? value : `${value.slice(0, maxChars)}…`;
+          }
+
+          function boundedInteger(value: unknown, fallback: number, maximum: number): number {
+            if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+            return Math.max(1, Math.min(Math.trunc(value), maximum));
+          }
+
+          function summarizeTaskState(task: Record<string, unknown>) {
+            const effectiveState = task.effectiveState && typeof task.effectiveState === "object"
+              ? task.effectiveState as Record<string, unknown>
+              : {};
+            return {
+              id: task.id,
+              title: boundedText(task.title, 240),
+              status: task.status,
+              declaredStatus: task.declaredStatus ?? effectiveState.declaredStatus,
+              effectiveStatus: task.effectiveStatus ?? effectiveState.effectiveStatus,
+              statusReason: boundedText(task.statusReason ?? effectiveState.reason, 400),
+              dependsOn: task.dependsOn,
+              risk: task.risk,
+              latestRunId: task.latestRunId ?? effectiveState.latestRunId,
+              latestRunStatus: task.latestRunStatus ?? effectiveState.latestRunStatus,
+              activeRunId: task.activeRunId ?? effectiveState.activeRunId,
+              activeRunStatus: task.activeRunStatus ?? effectiveState.activeRunStatus,
+              verificationStatus: task.verificationStatus ?? effectiveState.verificationStatus,
+              terminal: task.terminal ?? effectiveState.terminal,
+              inactive: task.inactive ?? effectiveState.inactive,
+              dispatchable: task.dispatchable ?? effectiveState.dispatchable,
+              retryable: task.retryable ?? effectiveState.retryable,
+              requiresExplicitRetry: task.requiresExplicitRetry ?? effectiveState.requiresExplicitRetry,
+              dependencyState: task.dependencyState,
+            };
+          }
+
+          function summarizeIssueView(issue: IssueEffectiveView) {
+            const taskCounts = issue.tasks.reduce<Record<string, number>>((counts, task) => {
+              const status = task.effectiveStatus ?? task.status;
+              counts[status] = (counts[status] ?? 0) + 1;
+              return counts;
+            }, {});
+            return {
+              detailLevel: "summary",
+              schemaVersion: issue.schemaVersion,
+              id: issue.id,
+              title: boundedText(issue.title, 240),
+              slug: issue.slug,
+              kind: issue.kind,
+              status: issue.status,
+              lifecycleStatus: issue.lifecycleStatus,
+              summary: boundedText(issue.summary, 800),
+              github: issue.github,
+              archivedAt: issue.archivedAt,
+              createdAt: issue.createdAt,
+              updatedAt: issue.updatedAt,
+              taskCount: issue.tasks.length,
+              taskCounts,
+              tasks: issue.tasks.map((task) => summarizeTaskState(task as unknown as Record<string, unknown>)),
+              next: `Call get_issue with issue_id=${issue.id} and detail_level=full for goals, notes, verification, and full Run history.`,
+            };
+          }
+
+          function summarizeTimelineEvent(event: Record<string, unknown>) {
+            return {
+              id: event.id,
+              at: event.at,
+              category: event.category,
+              action: event.action,
+              summary: boundedText(event.summary, 500),
+              actor: event.actor,
+              issueId: event.issueId,
+              taskId: event.taskId,
+              runId: event.runId,
+              editSessionId: event.editSessionId,
+              statusFrom: event.statusFrom,
+              statusTo: event.statusTo,
+            };
+          }
+
+          function summarizeTaskProgressResult(
+            repoRoot: string,
+            detail: TaskProgressDetail,
+            timelineLimit: number,
+          ) {
+            const runs = detail.runs.slice(-10).map((run) =>
+              summarizeAgentRun(repoRoot, run as unknown as Record<string, unknown>, {
+                includePaths: false,
+                includeOutput: false,
+              })
+            );
+            const timeline = detail.timeline
+              .slice(0, timelineLimit)
+              .map((event) => summarizeTimelineEvent(event as unknown as Record<string, unknown>));
+            return {
+              detailLevel: "summary",
+              issue: detail.issue,
+              task: summarizeTaskState(detail.task as unknown as Record<string, unknown>),
+              progress: {
+                ...detail.progress,
+                title: boundedText(detail.progress.title, 240),
+                objective: boundedText(detail.progress.objective, 800),
+                statusReason: boundedText(detail.progress.statusReason, 400),
+                currentActivity: boundedText(detail.progress.currentActivity, 500),
+              },
+              runCount: detail.runs.length,
+              runs,
+              runsTruncated: detail.runs.length > runs.length,
+              timeline,
+              timelineTruncated: detail.timeline.length > timeline.length,
+              next: "Call get_task_progress_detail with detail_level=full for full Task evidence, Run metadata, and timeline details.",
+            };
+          }
+          '''
+          assert helper_anchor in service
+          service = service.replace(helper_anchor, helper_anchor + helpers, 1)
+
+          task_definition_old = '''      {
+                name: "get_task_progress_detail",
+                description:
+                  "Return one Task with effective progress, Run history, Verification evidence, and unified worklog timeline.",
+                inputSchema: {
+                  type: "object",
+                  properties: {
+                    issue_id: { type: "string" },
+                    task_id: { type: "string" },
+                  },
+                  required: ["issue_id", "task_id"],
+                  additionalProperties: false,
+                },
+                annotations: readOnly,
+              },'''
+          task_definition_new = '''      {
+                name: "get_task_progress_detail",
+                description:
+                  "Return bounded Task progress by default; set detail_level=full for full Run evidence and timeline details.",
+                inputSchema: {
+                  type: "object",
+                  properties: {
+                    issue_id: { type: "string" },
+                    task_id: { type: "string" },
+                    detail_level: { type: "string", enum: ["summary", "full"] },
+                    timeline_limit: { type: "number" },
+                  },
+                  required: ["issue_id", "task_id"],
+                  additionalProperties: false,
+                },
+                annotations: readOnly,
+              },'''
+          assert task_definition_old in service
+          service = service.replace(task_definition_old, task_definition_new, 1)
+
+          issue_definition_old = '''      {
+                name: "get_issue",
+                description: "Read one controller issue by ID.",
+                inputSchema: {
+                  type: "object",
+                  properties: { issue_id: { type: "string" } },
+                  required: ["issue_id"],
+                  additionalProperties: false,
+                },
+                annotations: readOnly,
+              },'''
+          issue_definition_new = '''      {
+                name: "get_issue",
+                description: "Read a bounded Issue summary by default; set detail_level=full for complete Task evidence.",
+                inputSchema: {
+                  type: "object",
+                  properties: {
+                    issue_id: { type: "string" },
+                    detail_level: { type: "string", enum: ["summary", "full"] },
+                  },
+                  required: ["issue_id"],
+                  additionalProperties: false,
+                },
+                annotations: readOnly,
+              },'''
+          assert issue_definition_old in service
+          service = service.replace(issue_definition_old, issue_definition_new, 1)
+
+          task_impl_old = '''        const result = getTaskProgressDetail(
+                  ctx.repoRoot,
+                  String(args.issue_id ?? ""),
+                  String(args.task_id ?? ""),
+                );
+                audit(ctx, name, "ok", args, `tasks/issues/${result.issue.id}`);
+                return textResult(result);'''
+          task_impl_new = '''        const detail = getTaskProgressDetail(
+                  ctx.repoRoot,
+                  String(args.issue_id ?? ""),
+                  String(args.task_id ?? ""),
+                );
+                const full = args.detail_level === "full";
+                const timelineLimit = boundedInteger(args.timeline_limit, full ? 300 : 25, 300);
+                const result = full
+                  ? {
+                      ...detail,
+                      detailLevel: "full",
+                      timeline: detail.timeline.slice(0, timelineLimit),
+                      timelineTruncated: detail.timeline.length > timelineLimit,
+                    }
+                  : summarizeTaskProgressResult(ctx.repoRoot, detail, timelineLimit);
+                audit(ctx, name, "ok", args, `tasks/issues/${detail.issue.id}`);
+                return textResult(result);'''
+          assert task_impl_old in service
+          service = service.replace(task_impl_old, task_impl_new, 1)
+
+          issue_impl_old = '''        const issue = getIssueEffectiveView(ctx.repoRoot, String(args.issue_id ?? ""));
+                audit(ctx, name, "ok", args, `tasks/issues/${issue.id}`);
+                return textResult(issue);'''
+          issue_impl_new = '''        const issue = getIssueEffectiveView(ctx.repoRoot, String(args.issue_id ?? ""));
+                const result = args.detail_level === "full"
+                  ? { ...issue, detailLevel: "full" }
+                  : summarizeIssueView(issue);
+                audit(ctx, name, "ok", args, `tasks/issues/${issue.id}`);
+                return textResult(result);'''
+          assert issue_impl_old in service
+          service = service.replace(issue_impl_old, issue_impl_new, 1)
+          service_path.write_text(service)
+
+          test_path = Path("tests/cli/mcp-controller.test.ts")
+          tests = test_path.read_text()
+          json_helper = '''async function jsonTool(
+            ctx: McpToolContext,
+            name: string,
+            args: Record<string, unknown> = {},
+          ) {
+            const result = await callMcpTool(ctx, name, args);
+            return { raw: result, value: JSON.parse(result.content[0].text) };
+          }
+          '''
+          size_helper = '''
+          function responseSize(result: { raw: unknown }): number {
+            return JSON.stringify(result.raw).length;
+          }
+          '''
+          assert json_helper in tests
+          tests = tests.replace(json_helper, json_helper + size_helper, 1)
+
+          full_lookup_old = '''        const completedIssue = await jsonTool(ctx, "get_issue", {
+                    issue_id: created.value.id,
+                  });
+                  expect(completedIssue.value.tasks[0].status).toBe("done");
+                  expect(completedIssue.value.tasks[0].verification).toBeTruthy();'''
+          full_lookup_new = '''        const completedIssue = await jsonTool(ctx, "get_issue", {
+                    issue_id: created.value.id,
+                    detail_level: "full",
+                  });
+                  expect(completedIssue.value.tasks[0].status).toBe("done");
+                  expect(completedIssue.value.tasks[0].verification).toBeTruthy();'''
+          assert full_lookup_old in tests
+          tests = tests.replace(full_lookup_old, full_lookup_new, 1)
+
+          last_test_anchor = '  test("publishes Issues and runs a visible GitHub Copilot cloud session", async () => {'
+          bounded_test = r'''  test("bounds default Issue and Task detail responses while preserving explicit full reads", async () => {
+            await withController(async (_repoRoot, ctx) => {
+              const created = await jsonTool(ctx, "create_issue", {
+                title: "Bounded response regression",
+                summary: "s".repeat(20_000),
+                tasks: Array.from({ length: 12 }, (_, index) => ({
+                  title: `Task ${index + 1}`,
+                  objective: "o".repeat(4_000),
+                  allowed_paths: ["src/**"],
+                  checks: ["focused"],
+                  acceptance_criteria: ["a".repeat(1_000)],
+                })),
+              });
+
+              const summary = await jsonTool(ctx, "get_issue", {
+                issue_id: created.value.id,
+              });
+              expect(summary.value.detailLevel).toBe("summary");
+              expect(summary.value.tasks).toHaveLength(12);
+              expect(summary.value.tasks[0].objective).toBeUndefined();
+              expect(summary.value.tasks[0].verification).toBeUndefined();
+              expect(responseSize(summary)).toBeLessThan(60_000);
+
+              const full = await jsonTool(ctx, "get_issue", {
+                issue_id: created.value.id,
+                detail_level: "full",
+              });
+              expect(full.value.detailLevel).toBe("full");
+              expect(full.value.tasks[0].objective).toHaveLength(4_000);
+              expect(responseSize(full)).toBeGreaterThan(responseSize(summary));
+
+              const progress = await jsonTool(ctx, "get_task_progress_detail", {
+                issue_id: created.value.id,
+                task_id: "T1",
+                timeline_limit: 3,
+              });
+              expect(progress.value.detailLevel).toBe("summary");
+              expect(progress.value.task.objective).toBeUndefined();
+              expect(progress.value.timeline.length).toBeLessThanOrEqual(3);
+              expect(responseSize(progress)).toBeLessThan(30_000);
+
+              const fullProgress = await jsonTool(ctx, "get_task_progress_detail", {
+                issue_id: created.value.id,
+                task_id: "T1",
+                detail_level: "full",
+                timeline_limit: 3,
+              });
+              expect(fullProgress.value.detailLevel).toBe("full");
+              expect(fullProgress.value.task.objective).toHaveLength(4_000);
+              expect(fullProgress.value.timeline.length).toBeLessThanOrEqual(3);
+            });
+          });
+
+          '''
+          assert last_test_anchor in tests
+          tests = tests.replace(last_test_anchor, bounded_test + last_test_anchor, 1)
+          test_path.write_text(tests)
+          PY
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Focused tests
+        run: bun test tests/cli/mcp-controller.test.ts
+
+      - name: Type check
+        run: bun run check:type
+
+      - name: Controller v8 gate
+        run: bun run check:controller-v8
+
+      - name: Commit fix and remove temporary workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm .github/workflows/apply-controller-502-fix.yml
+          git add src/cli/mcp/legacy-tool-service.ts tests/cli/mcp-controller.test.ts .github/workflows/apply-controller-502-fix.yml
+          git diff --cached --check
+          git commit -m "fix: bound controller status responses"
+          git push origin HEAD
