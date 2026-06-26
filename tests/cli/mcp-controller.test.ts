@@ -12,7 +12,7 @@ import { tmpdir } from "os";
 import { spawnSync } from "child_process";
 import { join } from "path";
 import { writeJsonAtomic } from "../../src/runtime/shared/json-files";
-import { createExecutionJob } from "../../src/runtime/execution/jobs/store";
+import { createExecutionJob, updateExecutionJob } from "../../src/runtime/execution/jobs/store";
 import { callRuntimeTool } from "../../src/runtime/gateway/mcp/runtime-tools";
 import { getMcpPolicy } from "../../src/cli/mcp/policy";
 import { createMcpToolContext as createMultiRepositoryContext } from "../../src/cli/mcp/multi-repository";
@@ -317,6 +317,75 @@ describe("MCP controller profile", () => {
       const contextValue = JSON.parse(context!.content[0].text);
       expect(contextValue.contextProjection.refreshJobId).toBeUndefined();
       expect(["DISPATCH_LOOP_STALLED", "DAEMON_NOT_READY"]).toContain(contextValue.contextProjection.refreshBlockedReason);
+    });
+  });
+
+  test("returns durable job summaries by default and keeps full detail opt-in", async () => {
+    await withController(async (repoRoot, _ctx) => {
+      const controllerHome = join(repoRoot, ".controller-home");
+      const multi = createMultiRepositoryContext({ repo: repoRoot, profile: "controller", controllerHome });
+      const repository = registerRepository({ path: repoRoot, controllerHome });
+      const created = createExecutionJob(multi.controllerHome, {
+        repoId: repository.repoId,
+        checkoutId: repository.activeCheckoutId,
+        type: "mcp-tool",
+        requestId: "job-summary-default",
+        semanticKey: "job-summary-default",
+        origin: { surface: "mcp", actor: "test" },
+        payload: {
+          operation: "repository_command_execute",
+          target: "mcp-tool",
+          arguments: {
+            cwd: repoRoot,
+            command: `cat ${join(repoRoot, "src/example.ts")}`,
+            prompt: "x".repeat(500),
+          },
+        },
+        resourceClaims: [],
+      });
+      updateExecutionJob(
+        multi.controllerHome,
+        repository.repoId,
+        created.job.jobId,
+        (job) => ({
+          ...job,
+          status: "failed",
+          finishedAt: new Date().toISOString(),
+          error: {
+            code: "TEST_FAILURE",
+            message: `failed while reading ${repoRoot}`,
+            retryable: false,
+            details: {
+              cwd: repoRoot,
+              command: `cat ${join(repoRoot, "src/example.ts")}`,
+              output: "y".repeat(900),
+            },
+          },
+        }),
+        "job_failed",
+        { cwd: repoRoot },
+      );
+
+      const summary = await callRuntimeTool(multi, "get_job", {
+        repo_id: repository.repoId,
+        job_id: created.job.jobId,
+        include_events: true,
+      });
+      const summaryValue = JSON.parse(summary!.content[0].text);
+      expect(summaryValue.detailLevel).toBe("summary");
+      expect(summaryValue.job.payload.argumentKeys).toContain("cwd");
+      expect(summaryValue.job.payload.arguments).toBeUndefined();
+      expect(JSON.stringify(summaryValue.job)).not.toContain(repoRoot);
+      expect(JSON.stringify(summaryValue.events)).not.toContain(repoRoot);
+
+      const full = await callRuntimeTool(multi, "get_job", {
+        repo_id: repository.repoId,
+        job_id: created.job.jobId,
+        detail_level: "full",
+      });
+      const fullValue = JSON.parse(full!.content[0].text);
+      expect(fullValue.detailLevel).toBe("full");
+      expect(JSON.stringify(fullValue.job)).toContain(repoRoot);
     });
   });
 
@@ -666,7 +735,7 @@ describe("MCP controller profile", () => {
         ).value;
         for (
           let attempt = 0;
-          attempt < 50 && !["succeeded", "failed"].includes(run.status);
+          attempt < 120 && !["succeeded", "failed"].includes(run.status);
           attempt += 1
         ) {
           await Bun.sleep(25);
@@ -678,6 +747,8 @@ describe("MCP controller profile", () => {
         }
         expect(run.status).toBe("succeeded");
         expect(run.stdoutTail).toContain("controller-run-ok");
+        expect(run.worktree).toBeUndefined();
+        expect(run.promptPath).toBeUndefined();
         let issue = await jsonTool(ctx, "get_issue", {
           issue_id: created.value.id,
         });
@@ -1154,6 +1225,7 @@ echo "slow-start-ok"
         expect(
           runs.value.runs.filter((entry: { runId: string }) => entry.runId === first.value.runId),
         ).toHaveLength(1);
+        expect(runs.value.runs[0].worktree).toBeUndefined();
       } finally {
         process.env.PATH = originalPath;
         rmSync(binRoot, { recursive: true, force: true });
@@ -1318,7 +1390,13 @@ echo "slow-start-ok"
       expect(run.autoIntegrationError).toBeUndefined();
       expect(run.integratedSessionId).toBeTruthy();
       expect(run.worktreeCleanedAt).toBeTruthy();
-      expect(existsSync(run.worktree)).toBe(false);
+      const runWithPaths = (
+        await jsonTool(ctx, "get_task_run", {
+          run_id: run.runId,
+          include_paths: true,
+        })
+      ).value;
+      expect(existsSync(runWithPaths.worktree)).toBe(false);
       expect(readFileSync(join(repoRoot, "src/example.ts"), "utf-8")).toContain(
         "value = 2",
       );

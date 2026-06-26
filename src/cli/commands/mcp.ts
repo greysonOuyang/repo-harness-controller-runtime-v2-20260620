@@ -211,6 +211,7 @@ export function buildMcpCommand(): Command {
     .option('--public-endpoint <url>', 'Stable public HTTPS /mcp endpoint for named tunnel or public health checks')
     .option('--check-interval-ms <ms>', 'Health check interval in milliseconds')
     .option('--restart-delay-ms <ms>', 'Restart backoff in milliseconds')
+    .option('--local-ui', 'Start the localhost-only visual Local Controller alongside MCP keepalive')
     .option('--no-local-ui', 'Do not start the localhost-only visual Local Controller alongside MCP keepalive')
     .option('--local-ui-host <host>', 'Local Controller loopback host', '127.0.0.1')
     .option('--local-ui-port <port>', 'Local Controller port', '8766')

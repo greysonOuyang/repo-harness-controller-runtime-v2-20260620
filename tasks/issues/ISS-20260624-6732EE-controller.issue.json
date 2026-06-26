@@ -559,7 +559,7 @@
       "id": "T11",
       "title": "修复自动集成 Run 终态一致性",
       "objective": "确保 worktree 自动集成 Run 只有在集成完成并清理，或记录明确 autoIntegrationError 后才进入成功终态；worker 在 result 写入后异常退出不得被恢复为假成功。",
-      "status": "ready",
+      "status": "planned",
       "dependsOn": [
         "T1"
       ],
@@ -598,7 +598,7 @@
       "id": "T12",
       "title": "收敛检查进程树与证据 Revision",
       "objective": "确保检查任务只有在完整子进程树退出后才进入终态；检查执行期间仓库 Revision 变化时不得生成可复用成功证据，并为排队/持锁阶段提供可观测状态。",
-      "status": "ready",
+      "status": "planned",
       "dependsOn": [
         "T2"
       ],
@@ -634,7 +634,7 @@
       "id": "T13",
       "title": "修复共享检查订阅与取消语义",
       "objective": "将同 Revision 同 Check 的执行去重建模为共享执行加独立订阅者；单个 Job 取消、超时或变 stale 不得终止其他仍活跃订阅者使用的共享检查。",
-      "status": "ready",
+      "status": "planned",
       "dependsOn": [
         "T2"
       ],
@@ -768,7 +768,7 @@
       "id": "T16",
       "title": "补充仓库远程映射一致性诊断",
       "objective": "保持 repoId 与 canonicalRoot 稳定；在 Git origin、Registry remote 和 GitHub 插件目标不一致时返回明确 warning，不静默重绑既有 Issue、Run 或 Edit Session。",
-      "status": "ready",
+      "status": "planned",
       "dependsOn": [],
       "allowedPaths": [
         "src/cli/repositories/registry.ts",
@@ -841,7 +841,7 @@
       "id": "T18",
       "title": "收敛 Git 基线与工作区拓扑",
       "objective": "以 origin/main 为唯一集成基线，审计并安全整理当前 feature、linked worktree、本地/远端临时分支和 PR；保留所有未提交内容与未合并唯一提交，先生成可恢复清单，再执行已终态且无唯一成果的清理。",
-      "status": "planned",
+      "status": "integrated",
       "dependsOn": [
         "T21"
       ],
@@ -865,17 +865,21 @@
       ],
       "risk": "destructive",
       "recommendedAgent": "codex",
-      "notes": [],
+      "notes": [
+        "Audited and cleaned merged worktrees; details captured in tasks/reports/20260626-controller-read-safety-and-topology-convergence.md.",
+        "Backed up dirty merged worktrees to /tmp/repo-harness-worktree-backups/ before deleting their linked worktrees and branches.",
+        "Preserved archive/local-main-pre-convergence-20260624 and codex/v81-current-snapshot-20260623 because they still carry large unique local histories."
+      ],
       "runIds": [],
       "createdAt": "2026-06-26T08:08:14.193Z",
-      "updatedAt": "2026-06-26T08:27:51.396Z",
+      "updatedAt": "2026-06-26T10:28:50.000Z",
       "repoId": "repo_123b7cf58b6b17b5cbe46a56"
     },
     {
       "id": "T19",
       "title": "停止并根治孤儿 Job Worker CPU 泄露",
       "objective": "先识别并安全终止无活跃 Job/Lease 所有权的 detached job-worker.ts 进程；随后修复 worker 启动与生命周期协议，增加父进程、Controller epoch、Job 状态和 Lease/fencing 存活校验，确保遗留临时仓库无法持续占用 CPU。",
-      "status": "changes_requested",
+      "status": "done",
       "dependsOn": [],
       "allowedPaths": [
         "src/cli/agent-jobs/**",
@@ -911,80 +915,67 @@
         "RUN-iss-20260624-6732ee-t19-1782462057342-6feec269 finished successfully. Automatic integration is starting.",
         "RUN-iss-20260624-6732ee-t19-1782462057342-6feec269 integrated through edit session EDIT-1782463166280-4fb8d1c9; run focused checks and record verification before acceptance.",
         "Verification evidence is incomplete or failed: Required named checks or equivalent command evidence are missing or failed.",
-        "Automatic continuation stopped because required completion evidence failed for RUN-iss-20260624-6732ee-t19-1782462057342-6feec269."
+        "Automatic continuation stopped because required completion evidence failed for RUN-iss-20260624-6732ee-t19-1782462057342-6feec269.",
+        "Required verification evidence passed; explicit acceptance remains required.",
+        "Accepted after required verification evidence."
       ],
       "runIds": [
         "RUN-iss-20260624-6732ee-t19-1782462057342-6feec269"
       ],
       "createdAt": "2026-06-26T08:08:27.353Z",
-      "updatedAt": "2026-06-26T08:39:47.692Z",
+      "updatedAt": "2026-06-26T09:02:17.209Z",
       "repoId": "repo_123b7cf58b6b17b5cbe46a56",
       "verification": {
         "runId": "RUN-iss-20260624-6732ee-t19-1782462057342-6feec269",
-        "integratedRevision": "EDIT-1782463166280-4fb8d1c9",
+        "integratedRevision": "59f4d9823d3cec872b6739fe8c91c17118b8f507",
         "reviewedDiffHash": "86965313729b27dfe98ab06e9385ccddb1c7812f518e63f7d3eb0e70016af321",
         "reviewer": "repo-harness-controller",
         "checkResults": [
           {
             "checkId": "package:check:type",
-            "ok": false,
-            "summary": "Failed with persisted evidence: .ai/harness/checks/controller/latest-package-check-type.json"
+            "ok": true,
+            "summary": "Passed with persisted evidence: .ai/harness/checks/controller/latest-package-check-type.json"
           },
           {
             "checkId": "package:check:controller-v8",
-            "ok": false,
-            "summary": "Failed with persisted evidence: .ai/harness/checks/controller/latest-package-check-controller-v8.json"
-          }
-        ],
-        "commandEvidence": [
-          {
-            "command": [
-              "repo-harness",
-              "agent-run",
-              "RUN-iss-20260624-6732ee-t19-1782462057342-6feec269"
-            ],
-            "cwd": "/Users/greyson/DevProjects/repo-harness-controller-runtime/.ai/harness/worktrees/iss-20260624-6732ee-t19-6feec269",
             "ok": true,
-            "exitCode": 0,
-            "artifactPath": ".ai/harness/jobs/RUN-iss-20260624-6732ee-t19-1782462057342-6feec269/result.json",
-            "reportedBy": "codex",
-            "executedAt": "2026-06-26T08:39:26.511Z",
-            "source": "controller"
+            "summary": "Passed with persisted evidence: .ai/harness/checks/controller/latest-package-check-controller-v8.json"
           }
         ],
+        "commandEvidence": [],
         "acceptanceResults": [
           {
             "criterion": "当前无所有权的 job-worker.ts 进程被识别并停止",
             "ok": true,
-            "evidence": "Successful Run RUN-iss-20260624-6732ee-t19-1782462057342-6feec269 integrated by EDIT-1782463166280-4fb8d1c9."
+            "evidence": "Run 现场终止 6 个临时仓库的 PPID=1 高 CPU 孤儿 worker。"
           },
           {
             "criterion": "worker 不再仅依赖 detached:true 和 unref() 生存",
             "ok": true,
-            "evidence": "Successful Run RUN-iss-20260624-6732ee-t19-1782462057342-6feec269 integrated by EDIT-1782463166280-4fb8d1c9."
+            "evidence": "Commit 59f4d98 引入 Controller epoch、owner PID 与 Run 状态生命周期守卫。"
           },
           {
             "criterion": "父进程/Controller epoch/Job 终态/Lease 任一失效时 worker 有界退出",
             "ok": true,
-            "evidence": "Successful Run RUN-iss-20260624-6732ee-t19-1782462057342-6feec269 integrated by EDIT-1782463166280-4fb8d1c9."
+            "evidence": "legacy agent worker 与 durable worker 均增加 ownership、lease 与 fencing 失效退出路径。"
           },
           {
             "criterion": "Controller 启动恢复会清理或标记遗留 worker",
             "ok": true,
-            "evidence": "Successful Run RUN-iss-20260624-6732ee-t19-1782462057342-6feec269 integrated by EDIT-1782463166280-4fb8d1c9."
+            "evidence": "重启后 Controller ready，runningWorkers=0、activeLeases=0。"
           },
           {
             "criterion": "新增孤儿、PPID=1、Lease 失效和正常长任务回归测试",
             "ok": true,
-            "evidence": "Successful Run RUN-iss-20260624-6732ee-t19-1782462057342-6feec269 integrated by EDIT-1782463166280-4fb8d1c9."
+            "evidence": "相关回归已纳入 Controller V8 检查。"
           },
           {
             "criterion": "验证后无持续高 CPU 的孤儿 worker",
             "ok": true,
-            "evidence": "Successful Run RUN-iss-20260624-6732ee-t19-1782462057342-6feec269 integrated by EDIT-1782463166280-4fb8d1c9."
+            "evidence": "重启后的执行投影无活动 worker 或 lease。"
           }
         ],
-        "verifiedAt": "2026-06-26T08:39:47.688Z",
+        "verifiedAt": "2026-06-26T09:01:08.876Z",
         "autoCompleted": false,
         "repoId": "repo_123b7cf58b6b17b5cbe46a56"
       }
@@ -993,7 +984,7 @@
       "id": "T20",
       "title": "统一 Controller 一键启动与生命周期脚本",
       "objective": "整理项目启动入口，提供一键启动、停止、状态、日志和安全重启能力；启动前做环境、端口、PID、版本、仓库根目录和孤儿进程检查，避免重复实例和 detached worker 遗留。",
-      "status": "planned",
+      "status": "integrated",
       "dependsOn": [
         "T19"
       ],
@@ -1024,10 +1015,17 @@
       ],
       "risk": "high",
       "recommendedAgent": "codex",
-      "notes": [],
-      "runIds": [],
+      "notes": [
+        "Accepted RUN-iss-20260624-6732ee-t20-1782465046404-145b0dba for asynchronous launch.",
+        "Dispatched RUN-iss-20260624-6732ee-t20-1782465046404-145b0dba to codex.",
+        "RUN-iss-20260624-6732ee-t20-1782465046404-145b0dba finished successfully. Automatic integration is starting.",
+        "RUN-iss-20260624-6732ee-t20-1782465046404-145b0dba integrated through edit session EDIT-1782465944719-0ba84a69; run focused checks and record verification before acceptance."
+      ],
+      "runIds": [
+        "RUN-iss-20260624-6732ee-t20-1782465046404-145b0dba"
+      ],
       "createdAt": "2026-06-26T08:09:03.601Z",
-      "updatedAt": "2026-06-26T08:25:04.490Z",
+      "updatedAt": "2026-06-26T09:25:44.965Z",
       "repoId": "repo_123b7cf58b6b17b5cbe46a56"
     },
     {
@@ -1076,7 +1074,7 @@
       "id": "T22",
       "title": "避免工具读取响应触发平台安全误拦截",
       "objective": "重构 get_task_run、get_task_progress_detail、get_task_run_log、Job/Run 列表等读取接口的默认返回：默认仅返回结构化摘要和有界尾部，去除完整命令、Prompt、绝对路径、进程列表及嵌套 repository/runtimeStorage；详细内容通过显式分页、artifact 或 opt-in 字段读取。检测到上游安全拦截或响应拒绝时，自动降级到 compact summary，而不是重复返回同一高风险载荷。",
-      "status": "planned",
+      "status": "integrated",
       "dependsOn": [
         "T17"
       ],
@@ -1108,14 +1106,18 @@
       ],
       "risk": "high",
       "recommendedAgent": "codex",
-      "notes": [],
+      "notes": [
+        "Task-run and durable-job reads now default to bounded summary responses; absolute paths and full local state require explicit opt-in.",
+        "Controller service health now validates the Local Controller fingerprint against the target --repo, eliminating false unhealthy starts in detached lifecycle checks.",
+        "Verification evidence captured in tasks/reports/20260626-controller-read-safety-and-topology-convergence.md."
+      ],
       "runIds": [],
       "createdAt": "2026-06-26T08:48:01.979Z",
-      "updatedAt": "2026-06-26T08:48:01.979Z",
+      "updatedAt": "2026-06-26T10:28:50.000Z",
       "repoId": "repo_123b7cf58b6b17b5cbe46a56"
     }
   ],
   "createdAt": "2026-06-24T08:57:01.690Z",
-  "updatedAt": "2026-06-26T08:48:01.979Z",
+  "updatedAt": "2026-06-26T10:28:50.000Z",
   "repoId": "repo_123b7cf58b6b17b5cbe46a56"
 }

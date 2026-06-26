@@ -194,9 +194,9 @@ async function jsonHealth(url: string): Promise<Record<string, unknown> | null> 
   }
 }
 
-export function isExpectedLocalControllerHealth(payload: Record<string, unknown> | null): boolean {
+export function isExpectedLocalControllerHealth(payload: Record<string, unknown> | null, repoRoot = process.cwd()): boolean {
   const fingerprint = controllerToolSurfaceFingerprint(
-    controllerExpectedToolNames(runtimePolicy(process.cwd(), { profile: 'controller' })),
+    controllerExpectedToolNames(runtimePolicy(repoRoot, { profile: 'controller' })),
   );
   return payload?.status === 'ok'
     && payload.toolSurface === CONTROLLER_TOOL_SURFACE

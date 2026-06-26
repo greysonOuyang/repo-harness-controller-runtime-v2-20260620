@@ -3,6 +3,7 @@ import type { McpToolDefinition, CallToolResult } from '../../../cli/mcp/tools';
 import type { MultiRepositoryMcpToolContext } from '../../../cli/mcp/multi-repository';
 import { listRepositories, repositorySummary, resolveRepositorySelection } from '../../../cli/repositories/registry';
 import { cancelExecutionJob, createExecutionJob, findExecutionJob, getExecutionJob, listExecutionJobs } from '../../execution/jobs/store';
+import type { ExecutionJob } from '../../execution/jobs/types';
 import { readJobEvents } from '../../evidence/event-ledger';
 import { readExecutionArtifact } from '../../evidence/artifact-store';
 import { ensureControllerDaemon, readControllerDaemonStatus } from '../../control-plane/daemon-client';
@@ -20,6 +21,7 @@ import type { TaskRisk } from '../../../cli/controller/types';
 import { readRepositoryProjection } from '../../projections/materialized-view';
 import { controllerContextProjectionAgeMs, readControllerContextProjection } from '../../projections/controller-context';
 import { loadMcpRuntimeState } from '../../../cli/mcp/auth';
+import { redactMcpText } from '../../../cli/mcp/redaction';
 import {
   getLocalBridgeJobEventsSnapshot,
   getLocalBridgeJobSnapshot,
@@ -37,9 +39,18 @@ function definition(name: string, description: string, properties: Record<string
 }
 const repoId = { type: 'string', description: 'Stable repository id.' };
 export const runtimeToolDefinitions: McpToolDefinition[] = [
-  definition('get_job', 'Read one durable Execution Job, including its result and exact state.', { job_id: { type: 'string' }, repo_id: repoId, include_events: { type: 'boolean' } }, ['job_id']),
+  definition('get_job', 'Read one durable Execution Job. Summary is the default; opt in to full state only when needed.', {
+    job_id: { type: 'string' },
+    repo_id: repoId,
+    include_events: { type: 'boolean' },
+    detail_level: { type: 'string', enum: ['summary', 'full'] },
+  }, ['job_id']),
   definition('get_artifact', 'Read one bounded Evidence Plane artifact by id. Large content remains bounded.', { artifact_id: { type: 'string' }, repo_id: repoId, max_bytes: { type: 'number' } }, ['artifact_id', 'repo_id']),
-  definition('list_jobs', 'List durable Execution Jobs for one repository.', { repo_id: repoId, limit: { type: 'number' } }),
+  definition('list_jobs', 'List durable Execution Jobs for one repository. Summary is the default.', {
+    repo_id: repoId,
+    limit: { type: 'number' },
+    detail_level: { type: 'string', enum: ['summary', 'full'] },
+  }),
   definition('cancel_job', 'Cancel one queued or running durable Execution Job.', { job_id: { type: 'string' }, repo_id: repoId, reason: { type: 'string' } }, ['job_id'], false),
   definition('controller_ready', 'Return Gateway, Controller Daemon, Worker isolation, queue, and repository projection readiness.', { repo_id: repoId }),
   definition('repository_runtime_snapshot', 'Read the materialized runtime projection without scanning historical state.', { repo_id: repoId }),
@@ -90,6 +101,113 @@ export const runtimeToolDefinitions: McpToolDefinition[] = [
 
 function result(value: Record<string, unknown>, isError = false): CallToolResult {
   return { content: [{ type: 'text', text: JSON.stringify(value, null, 2) }], structuredContent: value, ...(isError ? { isError: true } : {}) };
+}
+
+function repositoryRootForRepoId(controllerHome: string, repoId: string): string | undefined {
+  return listRepositories(controllerHome).find((repository) => repository.repoId === repoId)?.canonicalRoot;
+}
+
+function scrubPathText(text: string, replacements: string[]): string {
+  let output = text;
+  for (const replacement of [...new Set(replacements.filter((entry) => entry.startsWith('/')))].sort((left, right) => right.length - left.length)) {
+    output = output.split(replacement).join('<repo>');
+  }
+  output = output
+    .replace(/\/(?:private\/)?tmp\/[^\s"']+/g, '<abs-path>')
+    .replace(/\/(?:private\/)?var\/folders\/[^\s"']+/g, '<abs-path>')
+    .replace(/\/Users\/[^\s"']+/g, '<abs-path>')
+    .replace(/[A-Za-z]:\\[^\s"']+/g, '<abs-path>');
+  return output;
+}
+
+function jsonPreview(value: unknown, maxChars = 800, replacements: string[] = []): { preview: string; truncated: boolean; byteLength: number } {
+  const serialized = JSON.stringify(value);
+  const redacted = redactMcpText(scrubPathText(serialized, replacements)).text;
+  const byteLength = Buffer.byteLength(serialized);
+  if (redacted.length <= maxChars) return { preview: redacted, truncated: false, byteLength };
+  return {
+    preview: `${redacted.slice(0, maxChars)}...`,
+    truncated: true,
+    byteLength,
+  };
+}
+
+function summarizeJobEvents(controllerHome: string, repoId: string, jobId: string): Array<Record<string, unknown>> {
+  const repoRoot = repositoryRootForRepoId(controllerHome, repoId);
+  return readJobEvents(controllerHome, repoId, jobId).slice(-20).map((event) => {
+    const dataPreview = event.data && Object.keys(event.data).length > 0 ? jsonPreview(event.data, 240, repoRoot ? [repoRoot] : []) : undefined;
+    return {
+      eventId: event.eventId,
+      eventType: event.eventType,
+      occurredAt: event.occurredAt,
+      revision: event.revision,
+      ...(dataPreview ? { dataPreview: dataPreview.preview, dataTruncated: dataPreview.truncated } : {}),
+    };
+  });
+}
+
+function summarizeExecutionJob(job: ExecutionJob, repoRoot?: string): Record<string, unknown> {
+  const payloadArguments = job.payload.arguments && typeof job.payload.arguments === 'object'
+    ? Object.keys(job.payload.arguments as Record<string, unknown>).slice(0, 20)
+    : undefined;
+  const replacements = repoRoot ? [repoRoot] : [];
+  const resultPreview = job.result !== undefined ? jsonPreview(job.result, 320, replacements) : undefined;
+  const errorPreview = job.error?.details !== undefined ? jsonPreview(job.error.details, 320, replacements) : undefined;
+  return {
+    jobId: job.jobId,
+    repoId: job.repoId,
+    checkoutId: job.checkoutId,
+    type: job.type,
+    status: job.status,
+    priority: job.priority,
+    requestId: job.requestId,
+    semanticKey: job.semanticKey,
+    payload: {
+      operation: job.payload.operation,
+      target: job.payload.target,
+      profile: job.payload.profile,
+      timeoutMs: job.payload.timeoutMs,
+      maxOutputBytes: job.payload.maxOutputBytes,
+      argumentKeys: payloadArguments,
+      summaryOnly: true,
+    },
+    origin: job.origin,
+    resourceClaims: job.resourceClaims,
+    dependencies: job.dependencies,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    queuedAt: job.queuedAt,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt,
+    heartbeatAt: job.heartbeatAt,
+    deadlineAt: job.deadlineAt,
+    workerPid: job.workerPid,
+    attempt: job.attempt,
+    maxAttempts: job.maxAttempts,
+    evidenceIds: job.evidenceIds,
+    result: resultPreview
+      ? {
+        preview: resultPreview.preview,
+        truncated: resultPreview.truncated,
+        byteLength: resultPreview.byteLength,
+        next: 'Call get_job with detail_level=full or get_artifact if an artifactId is present.',
+      }
+      : undefined,
+    error: job.error
+      ? {
+        code: job.error.code,
+        message: redactMcpText(scrubPathText(job.error.message, replacements)).text,
+        retryable: job.error.retryable,
+        ...(errorPreview
+          ? {
+            detailsPreview: errorPreview.preview,
+            detailsTruncated: errorPreview.truncated,
+            detailsByteLength: errorPreview.byteLength,
+          }
+          : {}),
+      }
+      : undefined,
+  };
 }
 
 
@@ -356,7 +474,16 @@ export async function callRuntimeTool(ctx: MultiRepositoryMcpToolContext, name: 
         const jobId = String(args.job_id ?? '').trim();
         const job = typeof args.repo_id === 'string' ? getExecutionJob(ctx.controllerHome, args.repo_id, jobId) : findExecutionJob(ctx.controllerHome, jobId);
         if (!job) return result({ error: { code: 'JOB_NOT_FOUND', message: jobId } }, true);
-        return result({ job, ...(args.include_events === true ? { events: readJobEvents(ctx.controllerHome, job.repoId, job.jobId) } : {}) });
+        const full = args.detail_level === 'full';
+        const repoRoot = repositoryRootForRepoId(ctx.controllerHome, job.repoId);
+        return result({
+          detailLevel: full ? 'full' : 'summary',
+          job: full ? job : summarizeExecutionJob(job, repoRoot),
+          ...(args.include_events === true
+            ? { events: full ? readJobEvents(ctx.controllerHome, job.repoId, job.jobId) : summarizeJobEvents(ctx.controllerHome, job.repoId, job.jobId) }
+            : {}),
+          ...(full ? {} : { next: 'Call get_job with detail_level=full only when the summary is insufficient.' }),
+        });
       }
       case 'get_artifact': {
         const artifactId = String(args.artifact_id ?? '').trim();
@@ -365,7 +492,13 @@ export async function callRuntimeTool(ctx: MultiRepositoryMcpToolContext, name: 
       }
       case 'list_jobs': {
         const repository = selected(ctx, args);
-        return result({ jobs: listExecutionJobs(ctx.controllerHome, repository.repoId, typeof args.limit === 'number' ? args.limit : 100) });
+        const jobs = listExecutionJobs(ctx.controllerHome, repository.repoId, typeof args.limit === 'number' ? args.limit : 100);
+        const full = args.detail_level === 'full';
+        return result({
+          detailLevel: full ? 'full' : 'summary',
+          jobs: full ? jobs : jobs.map((job) => summarizeExecutionJob(job, repository.canonicalRoot)),
+          ...(full ? {} : { next: 'Call get_job with one job_id for more detail.' }),
+        });
       }
       case 'cancel_job': {
         const jobId = String(args.job_id ?? '').trim();

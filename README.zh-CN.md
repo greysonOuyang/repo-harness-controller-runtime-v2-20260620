@@ -105,6 +105,27 @@ repo-harness mcp keepalive --repo . --profile controller \
 
 需要稳定域名时使用 named Cloudflare Tunnel。使用 ngrok 时，先通过 `--tunnel none` 启动本地 MCP，再由 ngrok 转发本地 MCP 端口。完整步骤见使用指南。
 
+### 6. macOS 一键生命周期入口
+
+在源码仓库中，可以用统一入口管理 detached Controller 栈的启动、停止、状态、日志和安全重启：
+
+```bash
+bun run controller:start
+bun run controller:status
+bun run controller:logs
+bun run controller:restart
+bun run controller:stop
+```
+
+不走 `package.json` script 时，也可以直接调用：
+
+```bash
+bash scripts/controller-runtime.sh start --repo .
+bash scripts/controller-runtime.sh status --repo .
+```
+
+`start` 会在真正拉起 daemon、MCP Gateway 和 Local Bridge 之前，先做 Bun、仓库根目录、包版本、PID 状态、MCP / Local Controller 端口、controller home 以及 detached repo-harness 孤儿进程检查。日志默认写到 `.ai/local/logs/repo-harness-controller.log`。
+
 ## 连接 ChatGPT
 
 1. 准备一个以 `/mcp` 结尾、可通过 HTTPS 访问的 MCP 地址。

@@ -11,6 +11,14 @@ import { finalizeEditSession, getEditSession, getEditSessionDiff, listEditSessio
 import { loadControllerProjectState, saveControllerProjectState } from '../controller/project-state';
 import { closeIssueWithGitHubPlugin, getGitHubPluginStatus, publishIssueWithGitHubPlugin, refreshIssueWithGitHubPlugin, saveGitHubPluginConfig } from '../github/plugin';
 import { getGitHubStatus } from '../github/github';
+import {
+  controllerServiceLogs,
+  controllerServiceStatus,
+  formatControllerServiceStatus,
+  restartControllerService,
+  startControllerService,
+  stopControllerService,
+} from '../controller/lifecycle';
 import { dispatchLocalBridgeJob,
   executeLocalBridgeJob, loadLocalBridgeConfig, submitLocalBridgeJob } from '../local-bridge/job-store';
 import { startLocalBridgeServer } from '../local-bridge/server';
@@ -467,6 +475,59 @@ export function buildControllerCommand(): Command {
         process.once('SIGINT', stop);
         process.once('SIGTERM', stop);
       });
+    });
+
+  const service = command.command('service')
+    .description('Manage the detached Controller stack that supervises the daemon, MCP Gateway, and Local Bridge');
+
+  service.command('start')
+    .option('--repo <path>', 'Repository root')
+    .option('--log-file <path>', 'Combined supervisor log file')
+    .option('--json', 'Output JSON')
+    .action(async (opts: { repo?: string; logFile?: string; json?: boolean }) => {
+      const result = await startControllerService({ repo: opts.repo, logFile: opts.logFile });
+      output(opts.json ? result : formatControllerServiceStatus(result.status), opts.json === true);
+    });
+
+  service.command('stop')
+    .option('--repo <path>', 'Repository root')
+    .option('--log-file <path>', 'Combined supervisor log file')
+    .option('--json', 'Output JSON')
+    .action(async (opts: { repo?: string; logFile?: string; json?: boolean }) => {
+      const result = await stopControllerService({ repo: opts.repo, logFile: opts.logFile });
+      output(opts.json ? result : formatControllerServiceStatus(result.status), opts.json === true);
+    });
+
+  service.command('status')
+    .option('--repo <path>', 'Repository root')
+    .option('--log-file <path>', 'Combined supervisor log file')
+    .option('--json', 'Output JSON')
+    .action(async (opts: { repo?: string; logFile?: string; json?: boolean }) => {
+      const result = await controllerServiceStatus({ repo: opts.repo, logFile: opts.logFile });
+      output(opts.json ? result : formatControllerServiceStatus(result), opts.json === true);
+    });
+
+  service.command('restart')
+    .option('--repo <path>', 'Repository root')
+    .option('--log-file <path>', 'Combined supervisor log file')
+    .option('--json', 'Output JSON')
+    .action(async (opts: { repo?: string; logFile?: string; json?: boolean }) => {
+      const result = await restartControllerService({ repo: opts.repo, logFile: opts.logFile });
+      output(opts.json ? result : formatControllerServiceStatus(result.status), opts.json === true);
+    });
+
+  service.command('logs')
+    .option('--repo <path>', 'Repository root')
+    .option('--log-file <path>', 'Combined supervisor log file')
+    .option('--tail <lines>', 'Approximate number of recent log lines', '200')
+    .option('--json', 'Output JSON')
+    .action(async (opts: { repo?: string; logFile?: string; tail?: string; json?: boolean }) => {
+      const result = await controllerServiceLogs({
+        repo: opts.repo,
+        logFile: opts.logFile,
+        tail: Math.max(1, Number(opts.tail ?? 200)),
+      });
+      output(opts.json ? result : result.text || `(no log output yet)\nlog: ${result.logPath}`, opts.json === true);
     });
 
   return command;

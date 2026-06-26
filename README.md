@@ -105,6 +105,27 @@ repo-harness mcp keepalive --repo . --profile controller \
 
 For a stable domain, use a named Cloudflare Tunnel. For ngrok, start the MCP server with `--tunnel none` and forward the local MCP port externally. Both procedures are documented in the complete guide.
 
+### 6. One-command local lifecycle on macOS
+
+From the source checkout, use the unified lifecycle wrapper to start, stop, inspect, restart, and read logs for the detached Controller stack:
+
+```bash
+bun run controller:start
+bun run controller:status
+bun run controller:logs
+bun run controller:restart
+bun run controller:stop
+```
+
+The same workflow is available without `package.json` scripts:
+
+```bash
+bash scripts/controller-runtime.sh start --repo .
+bash scripts/controller-runtime.sh status --repo .
+```
+
+`start` performs bounded preflight checks for Bun, repository root resolution, package version, tracked PID state, MCP and Local Controller ports, controller home, and detached repo-harness orphan processes before launching the daemon, MCP Gateway, and Local Bridge. Logs default to `.ai/local/logs/repo-harness-controller.log`.
+
 ## Connect ChatGPT
 
 1. Make the MCP endpoint reachable over HTTPS, ending in `/mcp`.

@@ -256,6 +256,208 @@ function fileSummary(
   }
 }
 
+function knownRunPathReplacements(
+  repoRoot: string,
+  run: Partial<{
+    executionRoot: string;
+    worktree: string;
+    worktreePath: string;
+  }>,
+): Array<{ from: string; to: string }> {
+  const replacements = new Map<string, string>();
+  const remember = (from: string | undefined, to: string) => {
+    if (!from || !from.startsWith("/")) return;
+    replacements.set(from, to);
+  };
+  remember(repoRoot, "<repo>");
+  remember(run.executionRoot, "<execution-root>");
+  remember(run.worktreePath, "<worktree>");
+  remember(run.worktree, run.worktree === repoRoot ? "<repo>" : "<worktree>");
+  return [...replacements.entries()]
+    .sort((left, right) => right[0].length - left[0].length)
+    .map(([from, to]) => ({ from, to }));
+}
+
+function redactRunText(
+  text: string,
+  repoRoot: string,
+  run: Partial<{
+    executionRoot: string;
+    worktree: string;
+    worktreePath: string;
+  }>,
+  maxChars: number,
+): { text: string; truncated: boolean; redactions: Array<{ type: string; count: number }> } {
+  let scrubbed = text;
+  for (const entry of knownRunPathReplacements(repoRoot, run)) {
+    scrubbed = scrubbed.split(entry.from).join(entry.to);
+  }
+  scrubbed = scrubbed
+    .replace(/\/(?:private\/)?tmp\/[^\s"']+/g, "<abs-path>")
+    .replace(/\/(?:private\/)?var\/folders\/[^\s"']+/g, "<abs-path>")
+    .replace(/\/Users\/[^\s"']+/g, "<abs-path>")
+    .replace(/[A-Za-z]:\\[^\s"']+/g, "<abs-path>");
+  const redacted = redactMcpText(scrubbed);
+  if (redacted.text.length <= maxChars) {
+    return { text: redacted.text, truncated: false, redactions: redacted.redactions };
+  }
+  return {
+    text: redacted.text.slice(-maxChars),
+    truncated: true,
+    redactions: redacted.redactions,
+  };
+}
+
+function maybeTail(
+  value: string | undefined,
+  repoRoot: string,
+  run: Partial<{
+    executionRoot: string;
+    worktree: string;
+    worktreePath: string;
+  }>,
+  maxChars: number,
+): { text: string; truncated: boolean; redactions: Array<{ type: string; count: number }> } | undefined {
+  if (!value) return undefined;
+  return redactRunText(value, repoRoot, run, maxChars);
+}
+
+function summarizeAgentRun(
+  repoRoot: string,
+  run: Record<string, unknown>,
+  options: {
+    includePaths?: boolean;
+    includeOutput?: boolean;
+    tailChars?: number;
+  } = {},
+): Record<string, unknown> {
+  const tailChars = Math.min(Math.max(options.tailChars ?? 4096, 256), 16 * 1024);
+  const base: Record<string, unknown> = {
+    runId: run.runId,
+    issueId: run.issueId,
+    taskId: run.taskId,
+    agent: run.agent,
+    provider: run.provider,
+    executionMode: run.executionMode,
+    executionClass: run.executionClass,
+    allowedPaths: run.allowedPaths,
+    status: run.status,
+    branch: run.branch,
+    baseRevision: run.baseRevision,
+    exitCode: run.exitCode,
+    error: typeof run.error === "string"
+      ? redactRunText(run.error, repoRoot, {
+        executionRoot: typeof run.executionRoot === "string" ? run.executionRoot : undefined,
+        worktree: typeof run.worktree === "string" ? run.worktree : undefined,
+        worktreePath: typeof run.worktreePath === "string" ? run.worktreePath : undefined,
+      }, 1000).text
+      : run.error,
+    timeoutMs: run.timeoutMs,
+    deadlineAt: run.deadlineAt,
+    startupDeadlineAt: run.startupDeadlineAt,
+    lastHeartbeatAt: run.lastHeartbeatAt,
+    progress: run.progress,
+    autoIntegrate: run.autoIntegrate,
+    autoIntegrationError: typeof run.autoIntegrationError === "string"
+      ? redactRunText(run.autoIntegrationError, repoRoot, {
+        executionRoot: typeof run.executionRoot === "string" ? run.executionRoot : undefined,
+        worktree: typeof run.worktree === "string" ? run.worktree : undefined,
+        worktreePath: typeof run.worktreePath === "string" ? run.worktreePath : undefined,
+      }, 1000).text
+      : run.autoIntegrationError,
+    worktreeCleanedAt: run.worktreeCleanedAt,
+    diffArtifactPath: run.diffArtifactPath,
+    terminationReason: run.terminationReason,
+    createdAt: run.createdAt,
+    startedAt: run.startedAt,
+    finishedAt: run.finishedAt,
+    integratedSessionId: run.integratedSessionId,
+    integratedAt: run.integratedAt,
+    timing: run.timing,
+    github: run.github && typeof run.github === "object"
+      ? {
+        owner: (run.github as Record<string, unknown>).owner,
+        repo: (run.github as Record<string, unknown>).repo,
+        taskId: (run.github as Record<string, unknown>).taskId,
+        state: (run.github as Record<string, unknown>).state,
+        url: (run.github as Record<string, unknown>).url,
+        pullRequestUrl: (run.github as Record<string, unknown>).pullRequestUrl,
+        baseRef: (run.github as Record<string, unknown>).baseRef,
+        model: (run.github as Record<string, unknown>).model,
+        createPullRequest: (run.github as Record<string, unknown>).createPullRequest,
+      }
+      : run.github,
+    detail: {
+      pathsIncluded: options.includePaths === true,
+      outputIncluded: options.includeOutput !== false,
+      next: {
+        log: "Call get_task_run_log for a larger bounded tail.",
+        diff: "Call get_task_diff to inspect Git changes from an isolated worktree.",
+      },
+    },
+  };
+  if (options.includeOutput !== false) {
+    const stdout = maybeTail(
+      typeof run.stdoutTail === "string" ? run.stdoutTail : undefined,
+      repoRoot,
+      {
+        executionRoot: typeof run.executionRoot === "string" ? run.executionRoot : undefined,
+        worktree: typeof run.worktree === "string" ? run.worktree : undefined,
+        worktreePath: typeof run.worktreePath === "string" ? run.worktreePath : undefined,
+      },
+      tailChars,
+    );
+    const stderr = maybeTail(
+      typeof run.stderrTail === "string" ? run.stderrTail : undefined,
+      repoRoot,
+      {
+        executionRoot: typeof run.executionRoot === "string" ? run.executionRoot : undefined,
+        worktree: typeof run.worktree === "string" ? run.worktree : undefined,
+        worktreePath: typeof run.worktreePath === "string" ? run.worktreePath : undefined,
+      },
+      tailChars,
+    );
+    if (stdout) {
+      base.stdoutTail = stdout.text;
+      base.stdoutTailTruncated = stdout.truncated;
+    }
+    if (stderr) {
+      base.stderrTail = stderr.text;
+      base.stderrTailTruncated = stderr.truncated;
+    }
+    const redactions = [...(stdout?.redactions ?? []), ...(stderr?.redactions ?? [])];
+    if (redactions.length > 0) base.redactions = redactions;
+  }
+  if (options.includePaths === true) {
+    Object.assign(base, {
+      repoRoot: run.repoRoot,
+      executionRoot: run.executionRoot,
+      worktree: run.worktree,
+      worktreePath: run.worktreePath,
+      promptPath: run.promptPath,
+      stdoutPath: run.stdoutPath,
+      stderrPath: run.stderrPath,
+      resultPath: run.resultPath,
+      eventsPath: run.eventsPath,
+      controllerPid: run.controllerPid,
+      controllerEpoch: run.controllerEpoch,
+      controllerEpochPath: run.controllerEpochPath,
+      launchPid: run.launchPid,
+      workerPid: run.workerPid,
+      agentPid: run.agentPid,
+    });
+  }
+  return base;
+}
+
+function summarizeRunList(
+  repoRoot: string,
+  runs: Array<Record<string, unknown>>,
+  includePaths = false,
+): Array<Record<string, unknown>> {
+  return runs.map((run) => summarizeAgentRun(repoRoot, run, { includePaths, includeOutput: false }));
+}
+
 function listFilesUnder(
   repoRoot: string,
   root: string,
@@ -2030,10 +2232,15 @@ export function buildMcpToolDefinitions(
       {
         name: "get_task_run",
         description:
-          "Read one persistent agent run with current status and log tails.",
+          "Read one persistent agent run with current status, bounded output tails, and opt-in path details.",
         inputSchema: {
           type: "object",
-          properties: { run_id: { type: "string" } },
+          properties: {
+            run_id: { type: "string" },
+            include_paths: { type: "boolean", description: "Opt in to full local filesystem paths and PIDs." },
+            include_output: { type: "boolean", description: "Return bounded stdout/stderr tails. Defaults to true." },
+            tail_chars: { type: "number", description: "Per-stream character budget for the bounded tails; capped at 16384." },
+          },
           required: ["run_id"],
           additionalProperties: false,
         },
@@ -2059,7 +2266,7 @@ export function buildMcpToolDefinitions(
       {
         name: "get_task_run_log",
         description:
-          "Read current local output or GitHub cloud-agent session logs. GitHub logs can be watched directly in the linked Agents UI.",
+          "Read a bounded, redacted tail of current local output or GitHub cloud-agent session logs. GitHub logs can be watched directly in the linked Agents UI.",
         inputSchema: {
           type: "object",
           properties: {
@@ -2107,7 +2314,10 @@ export function buildMcpToolDefinitions(
         description: "List recent persistent agent runs.",
         inputSchema: {
           type: "object",
-          properties: { limit: { type: "number" } },
+          properties: {
+            limit: { type: "number" },
+            include_paths: { type: "boolean", description: "Opt in to full local filesystem paths and PIDs." },
+          },
           additionalProperties: false,
         },
         annotations: readOnly,
@@ -3739,7 +3949,11 @@ export async function callMcpTool(
           );
         const run = getAgentJob(ctx.repoRoot, String(args.run_id ?? ""));
         audit(ctx, name, "ok", args, run.promptPath);
-        return textResult(run);
+        return textResult(summarizeAgentRun(ctx.repoRoot, run as unknown as Record<string, unknown>, {
+          includePaths: args.include_paths === true,
+          includeOutput: args.include_output !== false,
+          tailChars: typeof args.tail_chars === "number" ? Math.trunc(args.tail_chars) : undefined,
+        }));
       }
       case "get_task_run_events": {
         if (ctx.policy.profile !== "controller")
@@ -3773,10 +3987,35 @@ export async function callMcpTool(
           ctx.repoRoot,
           String(args.run_id ?? ""),
           false,
-          typeof args.max_bytes === "number" ? Math.trunc(args.max_bytes) : undefined,
+          typeof args.max_bytes === "number" ? Math.trunc(args.max_bytes) : 32 * 1024,
         );
         audit(ctx, name, "ok", args, log.url);
-        return textResult(log);
+        const run = getAgentJob(ctx.repoRoot, String(args.run_id ?? ""));
+        const bounded = redactRunText(
+          log.log,
+          ctx.repoRoot,
+          {
+            executionRoot: run.executionRoot,
+            worktree: run.worktree,
+            worktreePath: run.worktreePath,
+          },
+          Math.max(
+            4 * 1024,
+            Math.min(
+              typeof args.max_bytes === "number" ? Math.trunc(args.max_bytes) : 32 * 1024,
+              256 * 1024,
+            ),
+          ),
+        );
+        return textResult({
+          ...log,
+          log: bounded.text,
+          truncated: bounded.truncated,
+          redactions: bounded.redactions,
+          next: bounded.truncated
+            ? "Call get_task_run_log with a larger max_bytes value for more retained tail."
+            : undefined,
+        });
       }
       case "get_task_diff": {
         if (ctx.policy.profile !== "controller")
@@ -3825,7 +4064,13 @@ export async function callMcpTool(
           typeof args.limit === "number" ? args.limit : 50,
         );
         audit(ctx, name, "ok", args);
-        return textResult({ runs });
+        return textResult({
+          runs: summarizeRunList(
+            ctx.repoRoot,
+            runs as unknown as Array<Record<string, unknown>>,
+            args.include_paths === true,
+          ),
+        });
       }
       case "cancel_task_run": {
         if (ctx.policy.profile !== "controller")

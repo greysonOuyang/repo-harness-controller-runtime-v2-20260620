@@ -11,6 +11,7 @@ command -v bun >/dev/null 2>&1 || {
 
 bun test tests/cli/controller-chatgpt-bridge-v8.test.ts
 bun test tests/cli/controller-execution-first-v7.test.ts
+bun test tests/cli/controller-service.test.ts
 bun test tests/cli/mcp-execution-first-v7.test.ts
 bun test tests/cli/mcp-controller.test.ts
 bun test tests/cli/local-bridge.test.ts

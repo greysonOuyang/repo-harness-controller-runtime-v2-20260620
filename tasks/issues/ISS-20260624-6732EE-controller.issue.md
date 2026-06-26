@@ -2,7 +2,7 @@
 id: "ISS-20260624-6732EE"
 kind: "bug"
 status: "in_progress"
-updated_at: "2026-06-26T08:48:01.979Z"
+updated_at: "2026-06-26T10:28:50.000Z"
 source: "repo-harness-controller-v8"
 ---
 
@@ -136,7 +136,7 @@ source: "repo-harness-controller-v8"
 
 ### T11 — 修复自动集成 Run 终态一致性
 
-- Status: `ready`
+- Status: `planned`
 - Objective: 确保 worktree 自动集成 Run 只有在集成完成并清理，或记录明确 autoIntegrationError 后才进入成功终态；worker 在 result 写入后异常退出不得被恢复为假成功。
 - Depends on: `T1`
 - Allowed paths: `src/cli/agent-jobs/integration.ts`, `src/cli/agent-jobs/job-manager.ts`, `src/cli/agent-jobs/job-worker.ts`, `tests/cli/local-bridge.test.ts`, `tests/cli/mcp-controller.test.ts`
@@ -145,7 +145,7 @@ source: "repo-harness-controller-v8"
 
 ### T12 — 收敛检查进程树与证据 Revision
 
-- Status: `ready`
+- Status: `planned`
 - Objective: 确保检查任务只有在完整子进程树退出后才进入终态；检查执行期间仓库 Revision 变化时不得生成可复用成功证据，并为排队/持锁阶段提供可观测状态。
 - Depends on: `T2`
 - Allowed paths: `src/cli/controller/check-runner.ts`, `src/cli/local-bridge/job-store.ts`, `tests/cli/local-bridge.test.ts`, `tests/cli/mcp-controller.test.ts`
@@ -154,7 +154,7 @@ source: "repo-harness-controller-v8"
 
 ### T13 — 修复共享检查订阅与取消语义
 
-- Status: `ready`
+- Status: `planned`
 - Objective: 将同 Revision 同 Check 的执行去重建模为共享执行加独立订阅者；单个 Job 取消、超时或变 stale 不得终止其他仍活跃订阅者使用的共享检查。
 - Depends on: `T2`
 - Allowed paths: `src/cli/controller/check-runner.ts`, `src/cli/local-bridge/job-store.ts`, `tests/cli/local-bridge.test.ts`
@@ -181,7 +181,7 @@ source: "repo-harness-controller-v8"
 
 ### T16 — 补充仓库远程映射一致性诊断
 
-- Status: `ready`
+- Status: `planned`
 - Objective: 保持 repoId 与 canonicalRoot 稳定；在 Git origin、Registry remote 和 GitHub 插件目标不一致时返回明确 warning，不静默重绑既有 Issue、Run 或 Edit Session。
 - Depends on: none
 - Allowed paths: `src/cli/repositories/registry.ts`, `tests/cli/repository-registry-v81.test.ts`, `src/cli/mcp/tools.ts`
@@ -199,16 +199,20 @@ source: "repo-harness-controller-v8"
 
 ### T18 — 收敛 Git 基线与工作区拓扑
 
-- Status: `planned`
+- Status: `integrated`
 - Objective: 以 origin/main 为唯一集成基线，审计并安全整理当前 feature、linked worktree、本地/远端临时分支和 PR；保留所有未提交内容与未合并唯一提交，先生成可恢复清单，再执行已终态且无唯一成果的清理。
 - Depends on: `T21`
 - Allowed paths: `tasks/reports/**`, `docs/**`, `.github/**`
 - Checks: not defined
 - Execution hint: agent / codex
+- Notes:
+  - 审计和清理结果记录于 `tasks/reports/20260626-controller-read-safety-and-topology-convergence.md`。
+  - 4 个已合并 worktree 的脏改动先导出到 `/tmp/repo-harness-worktree-backups/`，随后删除对应 worktree 和分支。
+  - 仅保留 `archive/local-main-pre-convergence-20260624` 与 `codex/v81-current-snapshot-20260623` 两个仍含大体量唯一历史的本地分支。
 
 ### T19 — 停止并根治孤儿 Job Worker CPU 泄露
 
-- Status: `changes_requested`
+- Status: `done`
 - Objective: 先识别并安全终止无活跃 Job/Lease 所有权的 detached job-worker.ts 进程；随后修复 worker 启动与生命周期协议，增加父进程、Controller epoch、Job 状态和 Lease/fencing 存活校验，确保遗留临时仓库无法持续占用 CPU。
 - Depends on: none
 - Allowed paths: `src/cli/agent-jobs/**`, `src/cli/local-bridge/**`, `src/runtime/execution/**`, `src/runtime/resources/**`, `tests/cli/**`, `tests/runtime/**`, `scripts/**`
@@ -217,7 +221,7 @@ source: "repo-harness-controller-v8"
 
 ### T20 — 统一 Controller 一键启动与生命周期脚本
 
-- Status: `planned`
+- Status: `integrated`
 - Objective: 整理项目启动入口，提供一键启动、停止、状态、日志和安全重启能力；启动前做环境、端口、PID、版本、仓库根目录和孤儿进程检查，避免重复实例和 detached worker 遗留。
 - Depends on: `T19`
 - Allowed paths: `scripts/**`, `package.json`, `src/cli/**`, `tests/**`, `README.md`, `README.zh-CN.md`, `docs/**`
@@ -235,12 +239,16 @@ source: "repo-harness-controller-v8"
 
 ### T22 — 避免工具读取响应触发平台安全误拦截
 
-- Status: `planned`
+- Status: `integrated`
 - Objective: 重构 get_task_run、get_task_progress_detail、get_task_run_log、Job/Run 列表等读取接口的默认返回：默认仅返回结构化摘要和有界尾部，去除完整命令、Prompt、绝对路径、进程列表及嵌套 repository/runtimeStorage；详细内容通过显式分页、artifact 或 opt-in 字段读取。检测到上游安全拦截或响应拒绝时，自动降级到 compact summary，而不是重复返回同一高风险载荷。
 - Depends on: `T17`
 - Allowed paths: `src/cli/mcp/**`, `src/runtime/gateway/**`, `src/cli/agent-jobs/**`, `src/runtime/execution/**`, `tests/cli/**`, `tests/runtime/**`, `docs/**`
 - Checks: `package:check:type`, `package:check:controller-v8`
 - Execution hint: agent / codex
+- Notes:
+  - `get_task_run`、`get_task_run_log`、`list_task_runs`、`get_job` 和 `list_jobs` 已改为 summary-first；完整路径和 full durable state 需要显式 opt-in。
+  - Local Controller lifecycle 健康检查改为对目标 `--repo` 计算 fingerprint，修复 detached 启停测试中的误判 unhealthy。
+  - 验证证据见 `tasks/reports/20260626-controller-read-safety-and-topology-convergence.md`。
 
 ## Related Artifacts
 
