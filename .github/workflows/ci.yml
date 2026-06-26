@@ -32,8 +32,53 @@ jobs:
         with:
           bun-version: 1.3.10
 
-      - name: CI gate
-        run: bun run check:ci
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run check:type
+
+      - name: Runtime architecture
+        run: |
+          node scripts/check-runtime-architecture.mjs
+          node --loader ./src/runtime/shared/node-ts-loader.mjs scripts/check-mcp-compatibility.ts
+          node --loader ./src/runtime/shared/node-ts-loader.mjs scripts/smoke-runtime-recovery.ts
+          node --loader ./src/runtime/shared/node-ts-loader.mjs scripts/smoke-schedule-engine.ts
+          node --loader ./src/runtime/shared/node-ts-loader.mjs scripts/smoke-runtime-control-plane.ts
+          node --loader ./src/runtime/shared/node-ts-loader.mjs scripts/smoke-mcp-http-runtime.ts
+
+      - name: Bounded response regression
+        run: bun test --timeout "$BUN_TEST_TIMEOUT_MS" --max-concurrency 1 tests/cli/mcp-bounded-responses.test.ts
+
+      - name: Full test suite
+        run: |
+          while IFS= read -r file; do
+            echo "[ci] test $file"
+            bun test --timeout "$BUN_TEST_TIMEOUT_MS" --max-concurrency 1 "$file"
+          done < <(find tests -type f -name '*.test.ts' | LC_ALL=C sort)
+
+      - name: Workflow checks
+        run: |
+          bash scripts/check-deploy-sql-order.sh
+          bash scripts/check-architecture-sync.sh
+          bash scripts/check-task-sync.sh
+          if [[ -f scripts/prepare-handoff.sh ]]; then
+            REPO_HARNESS_SKIP_RESUME_REFRESH=1 bash scripts/prepare-handoff.sh "ci gate" >/dev/null
+          fi
+          if [[ -f scripts/codex-handoff-resume.sh ]]; then
+            bash scripts/codex-handoff-resume.sh --cwd . --reason "ci gate" >/dev/null
+          fi
+          bash scripts/check-task-workflow.sh --strict
+
+      - name: Repository inspection
+        run: |
+          bun scripts/inspect-project-state.ts --repo . --format text >/dev/null
+          bash scripts/migrate-project-template.sh --repo . --dry-run >/dev/null
+
+      - name: Package checks
+        run: |
+          npm pack --dry-run --json >/dev/null
+          bash scripts/check-tarball-install-smoke.sh
 
       - name: Diff hygiene
         run: git diff --check
