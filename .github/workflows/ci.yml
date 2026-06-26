@@ -1,151 +1,39 @@
-name: Apply Architecture Sync Fix
+name: CI
 
 on:
   pull_request:
+  push:
     branches:
       - main
-
-permissions:
-  contents: write
+      - codex/**
 
 jobs:
-  apply:
-    if: github.actor != 'github-actions[bot]'
+  test:
+    name: Test
     runs-on: ubuntu-latest
+    env:
+      BUN_TEST_MAX_CONCURRENCY: "1"
+      BUN_TEST_TIMEOUT_MS: "180000"
+      BUN_TEST_ISOLATE_FILES: "1"
     steps:
-      - name: Check out source branch
+      - name: Check out repository
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
-          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Install shell dependencies
+        run: sudo apt-get update && sudo apt-get install -y jq rsync
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.10
 
-      - name: Apply fail-closed baseline fix
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
+      - name: CI gate
+        run: bun run check:ci
 
-          script_path = Path('scripts/check-architecture-sync.sh')
-          script = script_path.read_text()
-          old_text_helper = '''require_architecture_text() {
-            local file="$1"
-            local text="$2"
-            require_architecture_file "$file"
-            grep -Fq -- "$text" "$file" || architecture_baseline_fail "$file must contain: $text"
-          }
-          '''
-          new_text_helper = '''require_architecture_text() {
-            local file="$1"
-            local text="$2"
-            if ! require_architecture_file "$file"; then
-              return 1
-            fi
-            grep -Fq -- "$text" "$file" || architecture_baseline_fail "$file must contain: $text"
-          }
-          '''
-          old_baseline = '''check_runtime_architecture_baseline() {
-            local file
-            require_architecture_text "docs/architecture/index.md" "Runtime Authority"
-            require_architecture_text "docs/architecture/index.md" "docs/architecture/current/"
-            require_architecture_text "docs/architecture/current/README.md" "Runtime Authority"
-            require_architecture_text "docs/architecture/current/governance.md" "Runtime Authority"
-
-            for file in "${required_current_docs[@]}"; do
-              require_architecture_file "$file"
-            done
-
-            for file in "${historical_runtime_docs[@]}"; do
-              require_architecture_text "$file" "Historical Design"
-              require_architecture_text "$file" "Not Runtime Authority"
-              require_architecture_text "$file" "architecture/current/README.md"
-            done
-
-            require_architecture_text "docs/architecture/current/architecture-invariants.md" "Invariant 2 — Persist Before Execute"
-            require_architecture_text "docs/architecture/current/architecture-invariants.md" "Invariant 4 — Task Is Intent; Run Is Attempt"
-            require_architecture_text "docs/architecture/current/architecture-invariants.md" "Invariant 16 — Evidence Binds to Exact Revision"
-            require_architecture_text "docs/architecture/current/architecture-invariants.md" "Invariant 21 — Scheduled Work Is Bounded"
-            require_architecture_text "docs/architecture/current/implementation-status.md" "## Completion Statement"
-            require_architecture_text "docs/architecture/current/migration-roadmap.md" "## P0"
-            require_architecture_text "docs/architecture/current/migration-roadmap.md" "## P5"
-          }
-          '''
-          new_baseline = '''check_runtime_architecture_baseline() {
-            local file
-            local failed=0
-            require_architecture_text "docs/architecture/index.md" "Runtime Authority" || failed=1
-            require_architecture_text "docs/architecture/index.md" "docs/architecture/current/" || failed=1
-            require_architecture_text "docs/architecture/current/README.md" "Runtime Authority" || failed=1
-            require_architecture_text "docs/architecture/current/governance.md" "Runtime Authority" || failed=1
-
-            for file in "${required_current_docs[@]}"; do
-              require_architecture_file "$file" || failed=1
-            done
-
-            for file in "${historical_runtime_docs[@]}"; do
-              require_architecture_text "$file" "Historical Design" || failed=1
-              require_architecture_text "$file" "Not Runtime Authority" || failed=1
-              require_architecture_text "$file" "architecture/current/README.md" || failed=1
-            done
-
-            require_architecture_text "docs/architecture/current/architecture-invariants.md" "Invariant 2 — Persist Before Execute" || failed=1
-            require_architecture_text "docs/architecture/current/architecture-invariants.md" "Invariant 4 — Task Is Intent; Run Is Attempt" || failed=1
-            require_architecture_text "docs/architecture/current/architecture-invariants.md" "Invariant 16 — Evidence Binds to Exact Revision" || failed=1
-            require_architecture_text "docs/architecture/current/architecture-invariants.md" "Invariant 21 — Scheduled Work Is Bounded" || failed=1
-            require_architecture_text "docs/architecture/current/implementation-status.md" "## Completion Statement" || failed=1
-            require_architecture_text "docs/architecture/current/migration-roadmap.md" "## P0" || failed=1
-            require_architecture_text "docs/architecture/current/migration-roadmap.md" "## P5" || failed=1
-            return "$failed"
-          }
-          '''
-          if old_text_helper not in script:
-            raise SystemExit('require_architecture_text anchor not found')
-          if old_baseline not in script:
-            raise SystemExit('baseline function anchor not found')
-          script = script.replace(old_text_helper, new_text_helper, 1)
-          script = script.replace(old_baseline, new_baseline, 1)
-          script_path.write_text(script)
-
-          test_path = Path('tests/architecture-sync.test.ts')
-          tests = test_path.read_text()
-          old_docs = '''  "implementation-status.md",
-            "migration-roadmap.md",
-          ];'''
-          new_docs = '''  "implementation-status.md",
-            "migration-roadmap.md",
-            "runtime-directory-map.md",
-            "operations-runbook.md",
-          ];'''
-          old_status = '''      content += "\\n## Implementation Gap\\n";'''
-          new_status = '''      content += "\\n## Completion Statement\\n";'''
-          if old_docs not in tests:
-            raise SystemExit('required docs anchor not found')
-          if old_status not in tests:
-            raise SystemExit('implementation status anchor not found')
-          tests = tests.replace(old_docs, new_docs, 1)
-          tests = tests.replace(old_status, new_status, 1)
-          test_path.write_text(tests)
-          PY
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Focused verification
-        run: |
-          bun test tests/architecture-sync.test.ts
-          bun run check:type
-
-      - name: Restore CI workflow and commit
-        shell: bash
-        run: |
-          git checkout origin/main -- .github/workflows/ci.yml
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add scripts/check-architecture-sync.sh tests/architecture-sync.test.ts .github/workflows/ci.yml
-          git diff --cached --check
-          git commit -m "fix: make architecture baseline fail closed"
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+      - name: Diff hygiene
+        run: git diff --check
