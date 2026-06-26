@@ -100,7 +100,7 @@ function hasActiveLocalJobs(path: string): boolean {
   for (const entry of readdirSync(path, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     const jobPath = join(path, entry.name, 'job.json');
-    if (!existsSync(jobPath)) continue;
+    if (!existsSync(jobPath)) return true;
     try {
       const job = JSON.parse(readFileSync(jobPath, 'utf-8')) as { status?: string };
       if (job.status && ACTIVE_LOCAL_JOB_STATUSES.has(job.status)) return true;
