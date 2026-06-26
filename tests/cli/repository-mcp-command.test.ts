@@ -5,7 +5,9 @@ import { join } from "path";
 import { spawnSync } from "child_process";
 import { registerRepository } from "../../src/cli/repositories/registry";
 import { callRepositoryTool } from "../../src/cli/mcp/repository-tools";
+import { createMcpToolContext } from "../../src/cli/mcp/multi-repository";
 import { getLocalBridgeJob, readLocalBridgeJobOutput } from "../../src/cli/local-bridge/job-store";
+import { routeDurableMcpCall } from "../../src/runtime/gateway/mcp/router";
 
 function git(root: string, args: string[]): void {
   const result = spawnSync("git", ["-C", root, ...args], {
@@ -101,6 +103,39 @@ describe("repository MCP command tools", () => {
       const value = await json(executed);
       expect(value.status).toBe("approval_required");
       expect(value.after).toBeUndefined();
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test("repository command preview stays read-only and does not create a durable Job", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "repo-harness-mcp-repo-command-preview-"));
+    const controllerHome = join(workspace, "controller-home");
+    const repoRoot = join(workspace, "sample-repo");
+    try {
+      mkdirSync(controllerHome, { recursive: true });
+      mkdirSync(repoRoot, { recursive: true });
+      git(repoRoot, ["init", "-b", "main"]);
+      git(repoRoot, ["config", "user.name", "Repo Harness Test"]);
+      git(repoRoot, ["config", "user.email", "repo-harness-test@example.com"]);
+      writeFileSync(join(repoRoot, "README.md"), "hello\n");
+      git(repoRoot, ["add", "README.md"]);
+      git(repoRoot, ["commit", "-m", "init"]);
+
+      const repository = registerRepository({ path: repoRoot, controllerHome });
+      const ctx = createMcpToolContext({ repo: repoRoot, controllerHome, profile: "controller" });
+      const durable = await routeDurableMcpCall(ctx, "repository_command_preview", {
+        repo_id: repository.repoId,
+        command: "git status --short",
+      });
+      expect(durable).toBeUndefined();
+
+      const preview = await json(callRepositoryTool(controllerHome, "repository_command_preview", {
+        repo_id: repository.repoId,
+        command: "git status --short",
+      }));
+      expect(preview.status).toBe("preview");
+      expect(preview.approvalToken).toBeTruthy();
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }

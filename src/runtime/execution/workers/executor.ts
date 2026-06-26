@@ -16,7 +16,10 @@ import { writeControllerContextProjection } from '../../projections/controller-c
 async function settleLegacyLocalJob(repoRoot: string, jobId: string, timeoutMs = 15 * 60_000) {
   const started = Date.now();
   let current = getLocalBridgeJob(repoRoot, jobId);
-  if (current.status === 'approved' || (current.status === 'dispatched' && current.result && typeof current.result.executionJobId === 'string')) {
+  const projectedExecutionPending = current.result
+    && typeof current.result.executionJobId === 'string'
+    && (current.status === 'dispatched' || (current.status === 'running' && current.ownerPid === undefined));
+  if (current.status === 'approved' || projectedExecutionPending) {
     current = executeLocalBridgeJobInline(repoRoot, jobId);
   }
   while (current.status === 'running') {

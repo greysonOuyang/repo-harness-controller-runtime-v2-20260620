@@ -13,7 +13,7 @@ import type { ExecutionJobPriority, ExecutionJobType } from '../../execution/job
 import { ensureControllerDaemon } from '../../control-plane/daemon-client';
 import { claimsForMcpOperation } from './resource-policy';
 
-const DIRECT_REPOSITORY_TOOLS = new Set(['repository_list', 'repository_get']);
+const DIRECT_REPOSITORY_TOOLS = new Set(['repository_list', 'repository_get', 'repository_workbench', 'repository_command_preview']);
 const DIRECT_HOT_READ_TOOLS = new Set([
   'get_task_run', 'get_task_run_events', 'get_task_run_log',
 ]);
@@ -29,9 +29,10 @@ function toolDefinition(ctx: MultiRepositoryMcpToolContext, name: string): McpTo
 }
 
 function shouldCreateDurableJob(ctx: MultiRepositoryMcpToolContext, name: string): boolean {
-  if (name.startsWith('repository_')) return !DIRECT_REPOSITORY_TOOLS.has(name);
   const definition = toolDefinition(ctx, name);
   if (!definition) return false;
+  if (name.startsWith('repository_') && DIRECT_REPOSITORY_TOOLS.has(name)) return false;
+  if (definition.annotations?.readOnlyHint === true) return false;
   return !DIRECT_HOT_READ_TOOLS.has(name);
 }
 
@@ -123,13 +124,7 @@ export async function routeDurableMcpCall(
     : repositoryScopedToolArgs(name, args, repository!);
   delete workerArgs.request_id;
   const semanticKey = `${isRepositoryTool ? 'repository-tool' : 'mcp-tool'}:${name}:${repoId}:${hashArguments(workerArgs)}`;
-  const claims = isRepositoryTool
-    ? name === 'repository_workbench'
-      ? []
-      : name === 'repository_command_execute' || name === 'repository_command_preview'
-        ? [{ resourceKey: `workspace:${checkoutId ?? 'active'}`, mode: 'write' as const }]
-        : [{ resourceKey: 'repo-state', mode: 'write' as const }]
-    : claimsForMcpOperation(name, workerArgs, repoId, checkoutId);
+  const claims = claimsForMcpOperation(name, workerArgs, repoId, checkoutId);
   const created = createExecutionJob(ctx.controllerHome, {
     repoId,
     checkoutId,

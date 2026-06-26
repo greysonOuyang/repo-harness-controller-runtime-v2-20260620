@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { RepoActor } from '../../src/runtime/control-plane/repo-actor/actor';
+import { GlobalScheduler } from '../../src/runtime/control-plane/global-scheduler/scheduler';
 import { assertAutomatedOperationAllowed } from '../../src/runtime/control-plane/governance/external-effects';
 import { boundExecutionResult, readExecutionArtifact } from '../../src/runtime/evidence/artifact-store';
 import {
@@ -13,6 +14,7 @@ import {
   updateExecutionJob,
 } from '../../src/runtime/execution/jobs/store';
 import { normalizeClaims } from '../../src/runtime/resources/claims/conflicts';
+import { claimsForMcpOperation } from '../../src/runtime/gateway/mcp/resource-policy';
 import {
   acquireExecutionLeases,
   assertFencingToken,
@@ -167,6 +169,60 @@ describe('target architecture runtime', () => {
     expect(reader.acquired).toBe(true);
     const writer = acquireExecutionLeases(controllerHome, 'repo-a', 'writer-job', [{ resourceKey: 'repo-state', mode: 'write' }], 30_000);
     expect(writer.acquired).toBe(false);
+  });
+
+  test('read-only MCP operations remain schedulable while a writer holds a lease', () => {
+    const controllerHome = home();
+    const writer = acquireExecutionLeases(
+      controllerHome,
+      'repo-a',
+      'writer-job',
+      claimsForMcpOperation('repository_command_execute', { command: 'git add README.md' }, 'repo-a', 'checkout-a'),
+      30_000,
+    );
+    expect(writer.acquired).toBe(true);
+    const reader = acquireExecutionLeases(
+      controllerHome,
+      'repo-a',
+      'reader-job',
+      claimsForMcpOperation('controller_context', {}, 'repo-a', 'checkout-a'),
+      30_000,
+    );
+    expect(reader.acquired).toBe(true);
+    const secondWriter = acquireExecutionLeases(
+      controllerHome,
+      'repo-a',
+      'writer-job-2',
+      claimsForMcpOperation('repository_command_execute', { command: 'git add README.md' }, 'repo-a', 'checkout-a'),
+      30_000,
+    );
+    expect(secondWriter.acquired).toBe(false);
+  });
+
+  test('keeps one durable recovery slot available under host pressure', async () => {
+    const controllerHome = home();
+    const created = createExecutionJob(controllerHome, {
+      repoId: '__controller__',
+      type: 'mcp-tool',
+      requestId: 'controller-repository-list',
+      semanticKey: 'repository-list',
+      origin: { surface: 'mcp' },
+      payload: { operation: 'repository_list', target: 'repository-tool' },
+      resourceClaims: [],
+      maxAttempts: 1,
+    }).job;
+    const scheduler = new GlobalScheduler(controllerHome, {
+      minFreeMemoryMb: Number.MAX_SAFE_INTEGER,
+      maxLoadPerCpu: Number.MAX_SAFE_INTEGER,
+      pollIntervalMs: 25,
+    });
+    await scheduler.tick();
+    let current = getExecutionJob(controllerHome, '__controller__', created.jobId);
+    for (let attempt = 0; attempt < 80 && ['queued', 'running'].includes(current.status); attempt += 1) {
+      await Bun.sleep(25);
+      current = getExecutionJob(controllerHome, '__controller__', created.jobId);
+    }
+    expect(current.status).toBe('succeeded');
   });
 
   test('moves oversized job results into the Evidence Plane', () => {

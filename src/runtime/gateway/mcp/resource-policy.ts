@@ -1,15 +1,54 @@
 import type { ResourceClaimSpec } from '../../execution/jobs/types';
 
+const READ_ONLY_TOOLS = new Set([
+  'controller_capabilities',
+  'controller_ready',
+  'controller_context',
+  'project_snapshot',
+  'get_project_state',
+  'get_project_governance',
+  'get_project_progress',
+  'get_project_board',
+  'get_task_progress_detail',
+  'get_issue',
+  'list_issues',
+  'list_task_runs',
+  'list_edit_sessions',
+  'list_checks',
+  'search_repository',
+  'read_repository_file',
+  'github_status',
+  'repository_get',
+  'repository_list',
+  'repository_workbench',
+  'repository_runtime_snapshot',
+  'list_schedules',
+  'repository_command_preview',
+  'get_local_job',
+  'get_local_job_output',
+  'local_bridge_status',
+  'get_task_run',
+  'get_task_run_events',
+  'get_task_run_log',
+  'get_task_diff',
+  'get_worklog_timeline',
+]);
 const REPO_STATE_TOOLS = new Set([
   'create_issue', 'update_issue', 'plan_issue', 'append_task', 'split_task', 'supersede_task',
   'set_task_dependencies', 'update_task', 'record_task_verification', 'accept_verified_task',
   'write_prd', 'write_prd_from_idea', 'write_sprint', 'write_checklist_sprint', 'write_plan',
-  'record_candidate_finding',
+  'record_candidate_finding', 'repository_register', 'repository_refresh', 'repository_validate',
+  'repository_update', 'repository_disable', 'repository_remove', 'create_edit_savepoint',
+  'begin_edit_session', 'set_current_issue', 'archive_issue', 'restore_issue', 'reconcile_project_governance',
 ]);
 const CHECK_TOOLS = new Set(['run_check', 'verify_edit_session']);
 const INTEGRATION_TOOLS = new Set(['integrate_task_run']);
 const REMOTE_TOOLS = new Set(['publish_issue_to_github', 'refresh_github_issue', 'close_github_issue', 'configure_github_plugin']);
 const AGENT_TOOLS = new Set(['dispatch_task', 'launch_issue', 'dispatch_ready_tasks', 'retry_task_run', 'quick_agent_session']);
+const WORKSPACE_WRITE_TOOLS = new Set([
+  'apply_patch', 'apply_edit_operations', 'rollback_edit_session', 'finalize_edit_session',
+  'repository_command_execute',
+]);
 
 function operationPaths(args: Record<string, unknown>): string[] {
   const paths = new Set<string>();
@@ -35,6 +74,7 @@ function isolatedWorktreeKey(args: Record<string, unknown>): string {
 }
 
 export function claimsForMcpOperation(name: string, args: Record<string, unknown>, repoId: string, checkoutId?: string): ResourceClaimSpec[] {
+  if (READ_ONLY_TOOLS.has(name)) return [];
   if (REPO_STATE_TOOLS.has(name)) return [{ resourceKey: 'repo-state', mode: 'write' }];
   if (CHECK_TOOLS.has(name)) return [{ resourceKey: `heavy-check:${repoId}`, mode: 'exclusive' }];
   if (INTEGRATION_TOOLS.has(name)) return [
@@ -48,7 +88,12 @@ export function claimsForMcpOperation(name: string, args: Record<string, unknown
     if (args.isolate === true) return [{ resourceKey: `worktree:${isolatedWorktreeKey(args)}`, mode: 'write' }];
     return [{ resourceKey: `workspace:${checkoutId ?? 'active'}`, mode: 'write' }];
   }
+  if (WORKSPACE_WRITE_TOOLS.has(name)) {
+    const paths = operationPaths(args);
+    if (paths.length > 0) return paths.map((path) => ({ resourceKey: `path:${path}`, mode: 'write' }));
+    return [{ resourceKey: `workspace:${checkoutId ?? 'active'}`, mode: 'write' }];
+  }
   const paths = operationPaths(args);
   if (paths.length > 0) return paths.map((path) => ({ resourceKey: `path:${path}`, mode: 'write' }));
-  return [{ resourceKey: 'repo-content:*', mode: 'write' }];
+  return [];
 }

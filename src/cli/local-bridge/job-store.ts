@@ -33,7 +33,9 @@ import { resolveRepositorySelection } from "../repositories/registry";
 import type { ControllerAgent, ControllerTask } from "../controller/types";
 import { taskExecutionPolicy } from "../controller/execution-policy";
 import { tryAppendControllerWorklogEvent } from "../controller/worklog";
+import { resolveControllerHome } from "../repositories/controller-home";
 import { dispatchLegacyLocalJob } from "../../runtime/execution/jobs/legacy-adapter";
+import { findExecutionJob } from "../../runtime/execution/jobs/store";
 import type {
   LaunchTaskPayload,
   LocalBridgeApproval,
@@ -604,6 +606,95 @@ function markJobTerminal(
   return saveJob(repoRoot, job);
 }
 
+export function failLocalBridgeJob(
+  repoRoot: string,
+  jobId: string,
+  message: string,
+  data?: Record<string, unknown>,
+): LocalBridgeJob {
+  const job = readLocalBridgeJob(repoRoot, jobId);
+  if (["succeeded", "failed", "timed_out", "orphaned", "stale", "cancelled"].includes(job.status)) return job;
+  return markJobTerminal(repoRoot, job, "failed", message, data);
+}
+
+function projectedExecutionJobId(job: LocalBridgeJob): string | undefined {
+  const result = job.result;
+  return result && typeof result.executionJobId === "string" ? result.executionJobId : undefined;
+}
+
+function projectedExecutionControllerHome(
+  job: LocalBridgeJob,
+): string {
+  if (
+    job.action === "repository-command" &&
+    job.payload &&
+    typeof job.payload === "object" &&
+    "controllerHome" in job.payload &&
+    typeof (job.payload as RepositoryCommandPayload).controllerHome === "string"
+  ) {
+    return resolveControllerHome((job.payload as RepositoryCommandPayload).controllerHome);
+  }
+  return resolveControllerHome();
+}
+
+function syncProjectedExecutionJob(repoRoot: string, job: LocalBridgeJob): LocalBridgeJob {
+  const executionJobId = projectedExecutionJobId(job);
+  if (!executionJobId || !["dispatched", "running"].includes(job.status)) return job;
+  const execution = findExecutionJob(projectedExecutionControllerHome(job), executionJobId);
+  if (!execution) return job;
+  const previous = job.status;
+  job.deadlineAt = execution.deadlineAt ?? job.deadlineAt;
+  job.workerPid = execution.workerPid;
+  if (execution.status === "running") {
+    job.status = "running";
+    job.startedAt = execution.startedAt ?? job.startedAt;
+    if (previous !== job.status) {
+      appendEvent(repoRoot, job.jobId, {
+        type: "job_started",
+        message: `Durable Execution Job ${execution.jobId} started running.`,
+        data: { executionJobId: execution.jobId, workerPid: execution.workerPid },
+      });
+      return saveJob(repoRoot, job);
+    }
+    return job;
+  }
+  if (["queued", "waiting_for_dependency", "waiting_for_workspace", "waiting_for_heavy_check", "waiting_for_integration", "waiting_for_release_barrier", "dispatched"].includes(execution.status)) {
+    return job;
+  }
+  job.status = execution.status === "succeeded"
+    ? "succeeded"
+    : execution.status === "cancelled"
+      ? "cancelled"
+      : execution.status === "timed_out"
+        ? "timed_out"
+        : execution.status === "stale"
+          ? "stale"
+          : execution.status === "orphaned"
+            ? "orphaned"
+            : "failed";
+  job.finishedAt = execution.finishedAt ?? now();
+  job.workerPid = undefined;
+  job.error = execution.error?.message;
+  job.result = {
+    ...(job.result ?? {}),
+    executionJobId: execution.jobId,
+    executionStatus: execution.status,
+  };
+  if (previous !== job.status) {
+    appendEvent(repoRoot, job.jobId, {
+      type: job.status === "succeeded"
+        ? "job_succeeded"
+        : job.status === "cancelled"
+          ? "job_cancelled"
+          : "job_failed",
+      message: `Durable Execution Job ${execution.jobId} ended as ${execution.status}.`,
+      data: { executionJobId: execution.jobId, executionStatus: execution.status, error: execution.error?.code },
+    });
+    return saveJob(repoRoot, job);
+  }
+  return job;
+}
+
 function refreshLongRunningJob(repoRoot: string, job: LocalBridgeJob): LocalBridgeJob {
   const payload = job.payload as VerifyEditSessionPayload | RepositoryCommandPayload;
   const configuredTimeout = resolvedJobTimeout(
@@ -675,6 +766,10 @@ function refreshLocalBridgeJob(
   }
   if ((job.action === "verify-edit-session" || job.action === "repository-command") && job.status === "running") {
     return refreshLongRunningJob(repoRoot, job);
+  }
+  if (projectedExecutionJobId(job) && ["dispatched", "running"].includes(job.status)) {
+    const synced = syncProjectedExecutionJob(repoRoot, job);
+    if (synced.status !== "dispatched") return synced;
   }
   if (!job.runId || !["dispatched", "running"].includes(job.status)) return job;
   try {
@@ -1217,9 +1312,11 @@ export function executeLocalBridgeJobInline(
   if (job.approval === "manual-only" && !job.approvedAt)
     throw new Error("legacy manual-only jobs cannot execute in V8; cancel and resubmit with same-request destructive authorization");
   const projectedExecutionJobId = job.result && typeof job.result.executionJobId === "string" ? job.result.executionJobId : undefined;
-  if (job.status !== "approved" && !(job.status === "dispatched" && projectedExecutionJobId)) return job;
+  const projectedDispatchPending = Boolean(projectedExecutionJobId)
+    && (job.status === "dispatched" || (job.status === "running" && job.ownerPid === undefined));
+  if (job.status !== "approved" && !projectedDispatchPending) return job;
   job.status = "running";
-  job.startedAt = now();
+  job.startedAt = job.startedAt ?? now();
   saveJob(repoRoot, job);
   appendEvent(repoRoot, job.jobId, {
     type: "job_started",

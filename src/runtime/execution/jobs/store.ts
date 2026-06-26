@@ -123,6 +123,17 @@ function upsertIndexes(controllerHome: string, job: ExecutionJob): void {
   }, 10_000);
 }
 
+function terminateWorkerProcess(pid: number | undefined): void {
+  if (!pid || pid === process.pid) return;
+  if (process.platform !== 'win32') {
+    try {
+      process.kill(-pid, 'SIGTERM');
+      return;
+    } catch { /* fall back to the direct PID */ }
+  }
+  try { process.kill(pid, 'SIGTERM'); } catch { /* already exited */ }
+}
+
 function persistJob(controllerHome: string, job: ExecutionJob): ExecutionJob {
   writeJsonAtomic(jobPath(controllerHome, job.repoId, job.jobId), job);
   upsertIndexes(controllerHome, job);
@@ -385,7 +396,7 @@ export function cancelExecutionJob(controllerHome: string, repoId: string, jobId
     leaseRefs: [],
   }, { reason });
   if (current.workerPid && current.workerPid !== process.pid) {
-    try { process.kill(current.workerPid, 'SIGTERM'); } catch { /* worker already exited */ }
+    terminateWorkerProcess(current.workerPid);
   }
   releaseExecutionLeases(controllerHome, repoId, jobId, current.leaseRefs);
   return cancelled;

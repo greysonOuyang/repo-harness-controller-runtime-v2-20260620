@@ -627,15 +627,16 @@ async function runToolsSmoke(config: ResolvedMcpRestartConfig): Promise<ToolsSmo
 }
 
 async function verifyPublicSurface(config: ResolvedMcpRestartConfig): Promise<PublicSurfaceCheck | undefined> {
-  if (!shouldVerifyPublicSurface(config)) return undefined;
-  const response = await fetch(config.publicEndpoint, { method: 'HEAD', redirect: 'manual' });
+  const publicEndpoint = config.publicEndpoint;
+  if (!shouldVerifyPublicSurface(config) || !publicEndpoint) return undefined;
+  const response = await fetch(publicEndpoint, { method: 'HEAD', redirect: 'manual' });
   const toolSurface = response.headers.get('x-repo-harness-tool-surface') ?? '';
   if (toolSurface !== config.expectedToolSurface) {
     throw new Error(
-      `Public MCP surface mismatch at ${config.publicEndpoint}: expected ${config.expectedToolSurface} got ${toolSurface || '<missing>'}`,
+      `Public MCP surface mismatch at ${publicEndpoint}: expected ${config.expectedToolSurface} got ${toolSurface || '<missing>'}`,
     );
   }
-  return { endpoint: config.publicEndpoint, toolSurface };
+  return { endpoint: publicEndpoint, toolSurface };
 }
 
 function configureGitHubPlugin(

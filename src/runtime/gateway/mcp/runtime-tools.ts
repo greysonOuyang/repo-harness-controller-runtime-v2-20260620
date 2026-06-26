@@ -6,6 +6,7 @@ import { cancelExecutionJob, createExecutionJob, findExecutionJob, getExecutionJ
 import { readJobEvents } from '../../evidence/event-ledger';
 import { readExecutionArtifact } from '../../evidence/artifact-store';
 import { ensureControllerDaemon, readControllerDaemonStatus } from '../../control-plane/daemon-client';
+import { readSchedulerHealthSnapshot } from '../../control-plane/global-scheduler/scheduler';
 import { rebuildRepositoryProjection } from '../../projections/materialized-view';
 import { createSchedule, getSchedule, getScheduleDecision, listOccurrences, listSchedules, saveSchedule } from '../../workflow/schedules/store';
 import { evaluateSchedule } from '../../workflow/schedules/engine';
@@ -120,6 +121,85 @@ function selected(ctx: MultiRepositoryMcpToolContext, args: Record<string, unkno
   });
 }
 
+const SCHEDULER_HEARTBEAT_STALE_MS = 5_000;
+const QUEUE_PROGRESS_STALE_MS = 10_000;
+
+function ageMs(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? Math.max(0, Date.now() - parsed) : undefined;
+}
+
+function controllerReadiness(ctx: MultiRepositoryMcpToolContext, repository = ctx.explicitRepository) {
+  const daemon = readControllerDaemonStatus(ctx.controllerHome);
+  const scheduler = readSchedulerHealthSnapshot(ctx.controllerHome);
+  const projection = repository ? readRepositoryProjection(ctx.controllerHome, repository.repoId) : undefined;
+  const localBridge = repository ? loadMcpRuntimeState(repository.canonicalRoot)?.localController : undefined;
+  const schedulerHeartbeatAgeMs = ageMs(scheduler.lastTickAt);
+  const dispatchHeartbeatAgeMs = ageMs(scheduler.lastDispatchAt);
+  const schedulerFresh = daemon.status === 'ready'
+    && schedulerHeartbeatAgeMs !== undefined
+    && schedulerHeartbeatAgeMs <= SCHEDULER_HEARTBEAT_STALE_MS;
+  const reasons: Array<{ code: string; message: string }> = [];
+
+  if (daemon.status !== 'ready') {
+    reasons.push({
+      code: 'DAEMON_NOT_READY',
+      message: `Controller daemon is ${daemon.status}.`,
+    });
+  }
+
+  if (projection?.queueDepth && !schedulerFresh) {
+    reasons.push({
+      code: 'DISPATCH_LOOP_STALLED',
+      message: 'The durable scheduler heartbeat is stale while queued Jobs are waiting.',
+    });
+  }
+
+  if (projection?.queueDepth && projection.runningWorkers === 0 && projection.activeLeases === 0) {
+    reasons.push({
+      code: 'WORKER_NOT_RUNNING',
+      message: 'Queued Jobs exist but no Worker is currently running.',
+    });
+    if (dispatchHeartbeatAgeMs === undefined || dispatchHeartbeatAgeMs > QUEUE_PROGRESS_STALE_MS) {
+      reasons.push({
+        code: 'QUEUE_NOT_PROGRESSING',
+        message: 'Queued Jobs have not received a recent dispatch heartbeat.',
+      });
+    }
+  }
+
+  const ready = reasons.length === 0;
+  return {
+    ready,
+    state: ready ? 'ready' as const : daemon.status === 'ready' ? 'degraded' as const : 'not_ready' as const,
+    reasons,
+    daemon,
+    durableScheduler: {
+      status: schedulerFresh ? 'ready' : daemon.status === 'ready' ? 'degraded' : 'not_ready',
+      loopStartedAt: scheduler.loopStartedAt,
+      lastTickAt: scheduler.lastTickAt,
+      lastDispatchAt: scheduler.lastDispatchAt,
+      lastReconcileAt: scheduler.lastReconcileAt,
+      heartbeatAgeMs: schedulerHeartbeatAgeMs,
+      dispatchHeartbeatAgeMs,
+    },
+    workerLoop: {
+      status: projection?.runningWorkers ? 'running' : projection?.queueDepth ? 'idle' : 'ready',
+      queueDepth: projection?.queueDepth ?? 0,
+      runningWorkers: projection?.runningWorkers ?? 0,
+      activeLeases: projection?.activeLeases ?? 0,
+      consuming: (projection?.queueDepth ?? 0) === 0 || (projection?.runningWorkers ?? 0) > 0,
+    },
+    localBridge: repository ? {
+      running: localBridge?.running ?? false,
+      endpoint: localBridge?.endpoint,
+      error: localBridge?.error,
+    } : undefined,
+    projection,
+  };
+}
+
 export async function callRuntimeTool(ctx: MultiRepositoryMcpToolContext, name: string, args: Record<string, unknown>): Promise<CallToolResult | undefined> {
   try {
     switch (name) {
@@ -198,38 +278,45 @@ export async function callRuntimeTool(ctx: MultiRepositoryMcpToolContext, name: 
         const cached = readControllerContextProjection(ctx.controllerHome, repository.repoId);
         const ageMs = controllerContextProjectionAgeMs(cached);
         const stale = ageMs > 10_000;
+        const readiness = controllerReadiness(ctx, repository);
         let refreshJobId: string | undefined;
         let refreshError: string | undefined;
+        let refreshBlockedReason: string | undefined;
         if (stale) {
-          try {
-            const requestId = `projection:controller-context:${repository.repoId}:${Math.floor(Date.now() / 10_000)}`;
-            const created = createExecutionJob(ctx.controllerHome, {
-              repoId: repository.repoId,
-              checkoutId: repository.activeCheckoutId,
-              type: 'mcp-tool',
-              requestId,
-              semanticKey: `projection:controller-context:${repository.repoId}`,
-              origin: { surface: 'mcp', actor: 'controller_context', correlationId: requestId },
-              payload: {
-                operation: 'controller_context',
-                arguments: {},
-                target: 'mcp-tool',
-                profile: ctx.policy.profile,
-                enableChatgptBrowser: ctx.enableChatgptBrowser === true,
-                enableDevRunner: ctx.policy.execution.agentRunner,
-                allowedAgents: [...ctx.policy.execution.allowedAgents],
-                runnerTimeoutMs: ctx.policy.execution.runnerTimeoutMs,
-                runnerMaxTimeoutMs: ctx.policy.execution.runnerMaxTimeoutMs,
-              },
-              priority: 'P1',
-              resourceClaims: [],
-              timeoutMs: 45_000,
-              maxAttempts: 1,
-            });
-            refreshJobId = created.job.jobId;
-            ensureControllerDaemon(ctx.controllerHome);
-          } catch (error) {
-            refreshError = error instanceof Error ? error.message : String(error);
+          if (!readiness.ready) {
+            refreshBlockedReason = readiness.reasons[0]?.code;
+            refreshError = readiness.reasons[0]?.message;
+          } else {
+            try {
+              const requestId = `projection:controller-context:${repository.repoId}:${Math.floor(Date.now() / 10_000)}`;
+              const created = createExecutionJob(ctx.controllerHome, {
+                repoId: repository.repoId,
+                checkoutId: repository.activeCheckoutId,
+                type: 'mcp-tool',
+                requestId,
+                semanticKey: `projection:controller-context:${repository.repoId}`,
+                origin: { surface: 'mcp', actor: 'controller_context', correlationId: requestId },
+                payload: {
+                  operation: 'controller_context',
+                  arguments: {},
+                  target: 'mcp-tool',
+                  profile: ctx.policy.profile,
+                  enableChatgptBrowser: ctx.enableChatgptBrowser === true,
+                  enableDevRunner: ctx.policy.execution.agentRunner,
+                  allowedAgents: [...ctx.policy.execution.allowedAgents],
+                  runnerTimeoutMs: ctx.policy.execution.runnerTimeoutMs,
+                  runnerMaxTimeoutMs: ctx.policy.execution.runnerMaxTimeoutMs,
+                },
+                priority: 'P1',
+                resourceClaims: [],
+                timeoutMs: 45_000,
+                maxAttempts: 1,
+              });
+              refreshJobId = created.job.jobId;
+              ensureControllerDaemon(ctx.controllerHome);
+            } catch (error) {
+              refreshError = error instanceof Error ? error.message : String(error);
+            }
           }
         }
         const activeCheckout = repository.checkouts.find((checkout) => checkout.checkoutId === repository.activeCheckoutId);
@@ -258,9 +345,11 @@ export async function callRuntimeTool(ctx: MultiRepositoryMcpToolContext, name: 
             ageMs: Number.isFinite(ageMs) ? ageMs : undefined,
             stale,
             refreshJobId,
+            refreshBlockedReason,
             refreshError,
             nonBlocking: true,
           },
+          controllerReady: readiness,
         });
       }
       case 'get_job': {
@@ -285,18 +374,23 @@ export async function callRuntimeTool(ctx: MultiRepositoryMcpToolContext, name: 
         return result({ job: cancelExecutionJob(ctx.controllerHome, job.repoId, job.jobId, typeof args.reason === 'string' ? args.reason : undefined) });
       }
       case 'controller_ready': {
-        const daemon = readControllerDaemonStatus(ctx.controllerHome);
         const explicitRepoId = typeof args.repo_id === 'string' && args.repo_id.trim() ? args.repo_id.trim() : undefined;
         const registered = listRepositories(ctx.controllerHome).filter((repository) => repository.enabled && !repository.removedAt);
         const repository = explicitRepoId
           ? selected(ctx, args)
           : (ctx.explicitRepository ?? (registered.length === 1 ? registered[0] : undefined));
+        const readiness = controllerReadiness(ctx, repository);
         return result({
-          ready: daemon.status === 'ready',
+          ready: readiness.ready,
+          state: readiness.state,
           gateway: { ready: true, thin: true, longOperationsAreDurable: true },
-          daemon,
+          daemon: readiness.daemon,
+          durableScheduler: readiness.durableScheduler,
+          workerLoop: readiness.workerLoop,
+          localBridge: readiness.localBridge,
+          reasons: readiness.reasons,
           registeredRepositories: registered.length,
-          ...(repository ? { repository: rebuildRepositoryProjection(ctx.controllerHome, repository.repoId) } : {}),
+          ...(repository ? { repository: readiness.projection ?? rebuildRepositoryProjection(ctx.controllerHome, repository.repoId) } : {}),
         });
       }
       case 'repository_runtime_snapshot': {

@@ -7,8 +7,22 @@ import { getMcpPolicy } from '../../src/cli/mcp/policy';
 import { redactMcpText } from '../../src/cli/mcp/redaction';
 import { globMatches, normalizeMcpRelativePath, resolveMcpPath } from '../../src/cli/mcp/paths';
 import { buildMcpToolDefinitions } from '../../src/cli/mcp/tools';
+import { claimsForMcpOperation } from '../../src/runtime/gateway/mcp/resource-policy';
 
 describe('mcp policy and paths', () => {
+  test('classifies read-only controller operations without write claims', () => {
+    expect(claimsForMcpOperation('controller_capabilities', {}, 'repo-a')).toEqual([]);
+    expect(claimsForMcpOperation('search_repository', { query: 'needle' }, 'repo-a')).toEqual([]);
+    expect(claimsForMcpOperation('read_repository_file', { path: 'package.json' }, 'repo-a')).toEqual([]);
+    expect(claimsForMcpOperation('repository_command_preview', { command: 'git status --short' }, 'repo-a', 'checkout-a')).toEqual([]);
+  });
+
+  test('keeps write claims for mutating repository commands', () => {
+    expect(claimsForMcpOperation('repository_command_execute', { command: 'git add README.md' }, 'repo-a', 'checkout-a')).toEqual([
+      { resourceKey: 'workspace:checkout-a', mode: 'write' },
+    ]);
+  });
+
   test('matches repo-harness workflow globs without matching sibling paths', () => {
     expect(globMatches('plans/**', 'plans/prds/example.prd.md')).toBe(true);
     expect(globMatches('plans/plan-*.md', 'plans/plan-test.md')).toBe(true);

@@ -52,6 +52,11 @@ interface UpdateRepositoryInput {
   github?: RepositoryRecord['github'];
 }
 
+function validBranch(value: string | undefined): boolean {
+  if (!value) return true;
+  return /^(?!\/)(?!.*(?:\/\/|\.\.))(?!.*\/$)[A-Za-z0-9._/-]+$/.test(value);
+}
+
 function now(): string {
   return new Date().toISOString();
 }
@@ -197,35 +202,75 @@ function activeCheckout(record: RepositoryRecord): RepositoryCheckout {
 function defaultGitHubMapping(
   canonicalRemote: string | undefined,
   existing?: RepositoryRecord['github'],
+  previousCanonicalRemote?: string,
   legacy?: Partial<RepositoryRecord['github']>,
 ): RepositoryRecord['github'] {
-  if (existing) return existing;
-  if (legacy?.owner && legacy?.repo) {
+  const parsed = parseGitHubRemote(canonicalRemote);
+  const previousParsed = parseGitHubRemote(previousCanonicalRemote);
+  const legacyMapping = legacy?.owner && legacy?.repo ? {
+    owner: legacy.owner,
+    repo: legacy.repo,
+    repository: legacy.repository ?? `${legacy.owner}/${legacy.repo}`,
+    pluginEnabled: legacy.pluginEnabled ?? true,
+    syncMode: legacy.syncMode ?? 'manual',
+    includeTasks: legacy.includeTasks ?? true,
+    labels: legacy.labels,
+    projectOwner: legacy.projectOwner,
+    projectNumber: legacy.projectNumber,
+    issueSyncEnabled: legacy.issueSyncEnabled,
+    cloudAgentSupported: legacy.cloudAgentSupported,
+    authenticationCapability: legacy.authenticationCapability ?? 'unknown',
+  } : undefined;
+  if (!parsed) return existing ?? legacyMapping;
+  const inferredRepository = `${parsed.owner}/${parsed.repo}`;
+  if (!existing) {
     return {
-      owner: legacy.owner,
-      repo: legacy.repo,
-      repository: legacy.repository ?? `${legacy.owner}/${legacy.repo}`,
-      pluginEnabled: legacy.pluginEnabled ?? true,
-      syncMode: legacy.syncMode ?? 'manual',
-      includeTasks: legacy.includeTasks ?? true,
-      labels: legacy.labels,
-      projectOwner: legacy.projectOwner,
-      projectNumber: legacy.projectNumber,
-      issueSyncEnabled: legacy.issueSyncEnabled,
-      cloudAgentSupported: legacy.cloudAgentSupported,
-      authenticationCapability: legacy.authenticationCapability ?? 'unknown',
+      ...parsed,
+      repository: inferredRepository,
+      pluginEnabled: true,
+      syncMode: 'manual',
+      includeTasks: true,
+      authenticationCapability: 'unknown',
     };
   }
-  const parsed = parseGitHubRemote(canonicalRemote);
-  if (!parsed) return undefined;
-  return {
-    ...parsed,
-    repository: `${parsed.owner}/${parsed.repo}`,
-    pluginEnabled: true,
-    syncMode: 'manual',
-    includeTasks: true,
-    authenticationCapability: 'unknown',
-  };
+  const previousRepository = previousParsed ? `${previousParsed.owner}/${previousParsed.repo}` : undefined;
+  const existingRepository = existing.repository ?? `${existing.owner}/${existing.repo}`;
+  if (previousRepository && existingRepository.toLowerCase() === previousRepository.toLowerCase()) {
+    return {
+      ...existing,
+      ...parsed,
+      repository: inferredRepository,
+    };
+  }
+  return existing ?? legacyMapping;
+}
+
+function currentProcessOwnsRepository(record: RepositoryRecord): boolean {
+  try {
+    return realpathSync(process.cwd()) === realpathSync(record.canonicalRoot);
+  } catch {
+    return false;
+  }
+}
+
+function uniqueCanonicalRecord(records: RepositoryRecord[], canonicalRoot: string): RepositoryRecord | undefined {
+  const normalized = canonicalRoot.replace(/\\/g, '/');
+  return records.find((record) => record.canonicalRoot.replace(/\\/g, '/') === normalized);
+}
+
+function retireCanonicalDuplicates(records: RepositoryRecord[], canonicalRoot: string, keepRepoId: string, timestamp: string): RepositoryRecord[] {
+  const normalized = canonicalRoot.replace(/\\/g, '/');
+  return records.map((record) => {
+    if (record.repoId === keepRepoId || record.canonicalRoot.replace(/\\/g, '/') !== normalized) return record;
+    if (record.removedAt) return record;
+    return {
+      ...record,
+      enabled: false,
+      disabledAt: record.disabledAt ?? timestamp,
+      removedAt: record.removedAt ?? timestamp,
+      updatedAt: timestamp,
+    };
+  });
 }
 
 export function repositorySummary(record: RepositoryRecord): RepositorySummary {
@@ -274,16 +319,22 @@ export function selectRepositoryCheckout(record: RepositoryRecord, checkoutId?: 
 
 export function registerRepository(input: RegisterRepositoryInput): RepositoryRecord {
   const home = ensureControllerHome(input.controllerHome);
+  if (!input.path?.trim()) throw new Error('REPOSITORY_PATH_REQUIRED');
   const canonicalRoot = resolveGitRoot(input.path);
-  const rawRemote = input.remoteUrl?.trim() || git(canonicalRoot, ['config', '--get', 'remote.origin.url']);
+  if (input.defaultBranch && !validBranch(input.defaultBranch.trim())) throw new Error(`BRANCH_INVALID: ${input.defaultBranch}`);
+  const requestedRemote = input.remoteUrl?.trim();
+  const rawRemote = requestedRemote || git(canonicalRoot, ['config', '--get', 'remote.origin.url']);
   const canonicalRemote = normalizeRemoteUrl(rawRemote);
+  if (requestedRemote && !canonicalRemote) throw new Error(`REMOTE_URL_INVALID: ${requestedRemote}`);
   const localIdentity = readLocalIdentity(canonicalRoot);
   const legacyGitHub = readLegacyGitHubPluginConfig(canonicalRoot);
-  const repoId = canonicalRemote ? stableRemoteRepoId(canonicalRemote) : localIdentity.repoId || newLocalRepoId();
-  const checkoutId = stableCheckoutId(repoId, canonicalRoot);
   const timestamp = now();
   const registry = loadRepositoryRegistry(home);
-  const existing = registry.repositories.find((record) => record.repoId === repoId);
+  const existingByRoot = uniqueCanonicalRecord(registry.repositories, canonicalRoot);
+  const derivedRepoId = canonicalRemote ? stableRemoteRepoId(canonicalRemote) : localIdentity.repoId || newLocalRepoId();
+  const repoId = existingByRoot?.repoId ?? derivedRepoId;
+  const checkoutId = stableCheckoutId(repoId, canonicalRoot);
+  const existing = existingByRoot ?? registry.repositories.find((record) => record.repoId === repoId);
   const checkout: RepositoryCheckout = {
     checkoutId,
     localRoot: canonicalRoot,
@@ -307,7 +358,7 @@ export function registerRepository(input: RegisterRepositoryInput): RepositoryRe
     ],
     remoteUrl: rawRemote,
     canonicalRemote,
-    github: defaultGitHubMapping(canonicalRemote, existing?.github, legacyGitHub),
+    github: defaultGitHubMapping(canonicalRemote, existing?.github, existing?.canonicalRemote, legacyGitHub),
     defaultBranch: input.defaultBranch?.trim() || existing?.defaultBranch || defaultBranch(canonicalRoot),
     repositoryType: input.repositoryType ?? existing?.repositoryType ?? repositoryType(canonicalRoot, rawRemote),
     enabled: input.enabled ?? existing?.enabled ?? true,
@@ -319,8 +370,9 @@ export function registerRepository(input: RegisterRepositoryInput): RepositoryRe
     disabledAt: input.enabled === true ? undefined : existing?.disabledAt,
     removedAt: undefined,
   };
+  const retained = registry.repositories.filter((candidate) => candidate.repoId !== repoId);
   registry.repositories = [
-    ...registry.repositories.filter((candidate) => candidate.repoId !== repoId),
+    ...retireCanonicalDuplicates(retained, canonicalRoot, repoId, timestamp),
     record,
   ];
   saveRepositoryRegistry(registry, home);
@@ -330,6 +382,7 @@ export function registerRepository(input: RegisterRepositoryInput): RepositoryRe
 }
 
 export function updateRepository(repoId: string, patch: UpdateRepositoryInput, controllerHome?: string): RepositoryRecord {
+  if (patch.defaultBranch && !validBranch(patch.defaultBranch.trim())) throw new Error(`BRANCH_INVALID: ${patch.defaultBranch}`);
   const registry = loadRepositoryRegistry(controllerHome);
   const index = registry.repositories.findIndex((record) => record.repoId === repoId);
   if (index < 0) throw new Error(`repository not found: ${repoId}`);
@@ -353,6 +406,8 @@ export function updateRepository(repoId: string, patch: UpdateRepositoryInput, c
 }
 
 export function disableRepository(repoId: string, controllerHome?: string): RepositoryRecord {
+  const record = getRepository(repoId, controllerHome, { includeRemoved: true });
+  if (currentProcessOwnsRepository(record)) throw new Error(`REPOSITORY_SELF_PROTECTED: ${repoId}`);
   return updateRepository(repoId, { enabled: false }, controllerHome);
 }
 
@@ -360,6 +415,7 @@ export function removeRepository(repoId: string, controllerHome?: string): Repos
   const registry = loadRepositoryRegistry(controllerHome);
   const index = registry.repositories.findIndex((record) => record.repoId === repoId);
   if (index < 0) throw new Error(`repository not found: ${repoId}`);
+  if (currentProcessOwnsRepository(registry.repositories[index])) throw new Error(`REPOSITORY_SELF_PROTECTED: ${repoId}`);
   const timestamp = now();
   registry.repositories[index] = {
     ...registry.repositories[index],
@@ -461,7 +517,7 @@ export function refreshRepository(repoId: string, controllerHome?: string): Repo
     ],
     remoteUrl: rawRemote,
     canonicalRemote,
-    github: defaultGitHubMapping(canonicalRemote, record.github, readLegacyGitHubPluginConfig(canonicalRoot)),
+    github: defaultGitHubMapping(canonicalRemote, record.github, record.canonicalRemote, readLegacyGitHubPluginConfig(canonicalRoot)),
     defaultBranch: defaultBranch(canonicalRoot) ?? record.defaultBranch,
     repositoryType: repositoryType(canonicalRoot, rawRemote),
     updatedAt: timestamp,
@@ -469,6 +525,7 @@ export function refreshRepository(repoId: string, controllerHome?: string): Repo
     configurationPath: join(canonicalRoot, LOCAL_CONFIG),
   };
   registry.repositories[index] = refreshed;
+  registry.repositories = retireCanonicalDuplicates(registry.repositories, canonicalRoot, repoId, timestamp);
   saveRepositoryRegistry(registry, home);
   ensureRepositoryControllerLayout(home, repoId);
   writeLocalIdentity(refreshed);

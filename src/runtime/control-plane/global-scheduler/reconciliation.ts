@@ -17,6 +17,10 @@ function terminateWorker(pid: number | undefined): void {
   try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ }
 }
 
+function workerExited(pid: number | undefined): boolean {
+  return !pidAlive(pid);
+}
+
 function hasPotentialSideEffects(job: ExecutionJob): boolean {
   return job.resourceClaims.some((claim) => claim.mode !== 'read');
 }
@@ -93,6 +97,21 @@ export function reconcileExecutionJobs(controllerHome: string): { inspected: num
         },
       });
       settleScheduledExecution(controllerHome, terminalJob, 'failed', 'Scheduled mutating operation ended with an ambiguous outcome and requires human review.');
+      terminal += 1;
+      continue;
+    }
+
+    if (!deadlineElapsed && !workerExited(job.workerPid)) {
+      const terminalJob = transitionExecutionJob(controllerHome, job.repoId, job.jobId, 'orphaned', {
+        workerPid: undefined,
+        leaseRefs: [],
+        error: {
+          code: 'WORKER_TERMINATION_INCOMPLETE',
+          message: 'The previous Worker process group is still alive after termination was requested. Automatic retry is blocked to avoid duplicate execution.',
+          retryable: false,
+        },
+      });
+      settleScheduledExecution(controllerHome, terminalJob, 'failed', 'Scheduled worker did not exit after termination was requested.');
       terminal += 1;
       continue;
     }

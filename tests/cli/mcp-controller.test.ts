@@ -11,7 +11,11 @@ import {
 import { tmpdir } from "os";
 import { spawnSync } from "child_process";
 import { join } from "path";
+import { writeJsonAtomic } from "../../src/runtime/shared/json-files";
+import { createExecutionJob } from "../../src/runtime/execution/jobs/store";
+import { callRuntimeTool } from "../../src/runtime/gateway/mcp/runtime-tools";
 import { getMcpPolicy } from "../../src/cli/mcp/policy";
+import { createMcpToolContext as createMultiRepositoryContext } from "../../src/cli/mcp/multi-repository";
 import { callRepositoryTool } from "../../src/cli/mcp/repository-tools";
 import { registerRepository } from "../../src/cli/repositories/registry";
 import {
@@ -50,7 +54,10 @@ async function withController<T>(
   fn: (repoRoot: string, ctx: McpToolContext) => Promise<T>,
 ): Promise<T> {
   const repoRoot = mkdtempSync(join(tmpdir(), "repo-harness-controller-"));
+  const controllerHome = mkdtempSync(join(tmpdir(), "repo-harness-controller-home-"));
+  const previousControllerHome = process.env.REPO_HARNESS_CONTROLLER_HOME;
   try {
+    process.env.REPO_HARNESS_CONTROLLER_HOME = controllerHome;
     mkdirSync(join(repoRoot, "src"), { recursive: true });
     mkdirSync(join(repoRoot, "tasks"), { recursive: true });
     mkdirSync(join(repoRoot, ".ai/harness"), { recursive: true });
@@ -68,12 +75,16 @@ async function withController<T>(
       "export const value = 1;\n",
     );
     writeFileSync(join(repoRoot, "tasks/current.md"), "# Current\n");
+    spawnSync("git", ["init", "-b", "main"], { cwd: repoRoot, stdio: "ignore" });
     return await fn(repoRoot, {
       repoRoot,
       policy: getMcpPolicy("controller", { repoRoot }),
     });
   } finally {
+    if (previousControllerHome === undefined) delete process.env.REPO_HARNESS_CONTROLLER_HOME;
+    else process.env.REPO_HARNESS_CONTROLLER_HOME = previousControllerHome;
     rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(controllerHome, { recursive: true, force: true });
   }
 }
 
@@ -254,11 +265,58 @@ describe("MCP controller profile", () => {
         expected_changed_lines: 2,
         risk: "low",
       });
-      expect(context.value.git.branch).toBeNull();
+      expect(context.value.git.branch).toBe("main");
       expect(context.value.currentIssueId).toBe(created.value.id);
       expect(context.value.readyTasks.length).toBeGreaterThan(0);
       expect(context.value.checks.some((check: { id: string }) => check.id === "focused")).toBe(true);
       expect(context.value.recommendedExecution.recommendedMode).toBe("direct_edit");
+    });
+  });
+
+  test("reports degraded controller readiness when queued durable work has no scheduler progress", async () => {
+    await withController(async (repoRoot, _ctx) => {
+      const controllerHome = join(repoRoot, ".controller-home");
+      const multi = createMultiRepositoryContext({ repo: repoRoot, profile: "controller", controllerHome });
+      const repository = registerRepository({ path: repoRoot, controllerHome });
+      createExecutionJob(multi.controllerHome, {
+        repoId: repository.repoId,
+        checkoutId: repository.activeCheckoutId,
+        type: "mcp-tool",
+        requestId: "queued-no-worker",
+        semanticKey: "controller-context:stale",
+        origin: { surface: "mcp", actor: "controller_context" },
+        payload: { operation: "controller_context", target: "mcp-tool" },
+        resourceClaims: [],
+      });
+      writeJsonAtomic(join(multi.controllerHome, "daemon", "state.json"), {
+        schemaVersion: 1,
+        status: "ready",
+        pid: process.pid,
+        startedAt: new Date(Date.now() - 60_000).toISOString(),
+        gatewaySeparated: true,
+        workerIsolation: true,
+      });
+      writeJsonAtomic(join(multi.controllerHome, "scheduler", "state.json"), {
+        schemaVersion: 1,
+        updatedAt: new Date().toISOString(),
+        loopStartedAt: new Date(Date.now() - 60_000).toISOString(),
+        lastTickAt: new Date(Date.now() - 20_000).toISOString(),
+        lastDispatchAt: new Date(Date.now() - 20_000).toISOString(),
+        lastReconcileAt: new Date(Date.now() - 20_000).toISOString(),
+        lastRepoDispatch: {},
+      });
+
+      const ready = await callRuntimeTool(multi, "controller_ready", { repo_id: repository.repoId });
+      const readyValue = JSON.parse(ready!.content[0].text);
+      expect(readyValue.ready).toBe(false);
+      expect(["degraded", "not_ready"]).toContain(readyValue.state);
+      expect(readyValue.reasons.map((entry: { code: string }) => entry.code)).toContain("WORKER_NOT_RUNNING");
+      expect(readyValue.reasons.map((entry: { code: string }) => entry.code)).toContain("QUEUE_NOT_PROGRESSING");
+
+      const context = await callRuntimeTool(multi, "controller_context", { repo_id: repository.repoId });
+      const contextValue = JSON.parse(context!.content[0].text);
+      expect(contextValue.contextProjection.refreshJobId).toBeUndefined();
+      expect(["DISPATCH_LOOP_STALLED", "DAEMON_NOT_READY"]).toContain(contextValue.contextProjection.refreshBlockedReason);
     });
   });
 

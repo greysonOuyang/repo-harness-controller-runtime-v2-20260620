@@ -13,9 +13,15 @@ function option(name: string): string | undefined {
   return index >= 0 ? process.argv[index + 1] : undefined;
 }
 
+function pidAlive(pid: number | undefined): boolean {
+  if (!pid || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
 const controllerHome = ensureControllerHome(option('--controller-home'));
 const repoIdOption = option('--repo-id');
 const jobIdOption = option('--job-id');
+const controllerPid = Number(option('--controller-pid') ?? 0) || undefined;
 if (!repoIdOption || !jobIdOption) {
   throw new Error('worker-entry requires --repo-id and --job-id');
 }
@@ -37,6 +43,9 @@ async function main(): Promise<void> {
   markOperationStarted(controllerHome, job, process.pid);
   heartbeat = setInterval(() => {
     try {
+      if (controllerPid && !pidAlive(controllerPid)) {
+        throw new Error(`CONTROLLER_UNAVAILABLE: ${controllerPid}`);
+      }
       heartbeatExecutionJob(controllerHome, repoId, jobId, process.pid, claimedAttempt);
       renewExecutionLeases(controllerHome, repoId, jobId, 30_000, claimedLeaseRefs);
     } catch {

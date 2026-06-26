@@ -35,21 +35,28 @@ import {
 
 const roots: string[] = [];
 const servers: LocalBridgeServerHandle[] = [];
+const originalControllerHome = process.env.REPO_HARNESS_CONTROLLER_HOME;
 
 afterEach(async () => {
   for (const server of servers.splice(0)) await server.close();
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
+  if (originalControllerHome === undefined) delete process.env.REPO_HARNESS_CONTROLLER_HOME;
+  else process.env.REPO_HARNESS_CONTROLLER_HOME = originalControllerHome;
 });
 
 function repo(): string {
   const root = mkdtempSync(join(tmpdir(), "repo-harness-local-bridge-"));
+  const controllerHome = mkdtempSync(join(tmpdir(), "repo-harness-local-bridge-controller-"));
   roots.push(root);
+  roots.push(controllerHome);
   mkdirSync(join(root, "src"), { recursive: true });
   mkdirSync(join(root, "tasks"), { recursive: true });
   mkdirSync(join(root, ".ai/harness"), { recursive: true });
   writeFileSync(join(root, "src/example.ts"), "export const value = 1;\n");
   writeFileSync(join(root, "tasks/current.md"), "# Current\n");
+  expect(spawnSync("git", ["init", "-b", "main"], { cwd: root }).status).toBe(0);
+  process.env.REPO_HARNESS_CONTROLLER_HOME = controllerHome;
   return root;
 }
 
@@ -357,7 +364,7 @@ printf '%s\n' '{"type":"turn.completed"}'
     expect(duplicate.jobId).toBe(created.jobId);
 
     let finished = getLocalBridgeJob(root, created.jobId);
-    for (let attempt = 0; attempt < 300 && finished.status === "running"; attempt += 1) {
+    for (let attempt = 0; attempt < 300 && ["approved", "dispatched", "running"].includes(finished.status); attempt += 1) {
       await Bun.sleep(25);
       finished = getLocalBridgeJob(root, created.jobId);
     }
@@ -780,7 +787,7 @@ printf '%s\n' '{"type":"turn.completed"}'
     expect(verified.accepted).toBe(true);
     expect(typeof verified.jobId).toBe("string");
     let verificationJob = getLocalBridgeJob(root, verified.jobId);
-    for (let attempt = 0; attempt < 120 && ["approved", "running"].includes(verificationJob.status); attempt += 1) {
+    for (let attempt = 0; attempt < 300 && ["approved", "dispatched", "running"].includes(verificationJob.status); attempt += 1) {
       await Bun.sleep(25);
       verificationJob = getLocalBridgeJob(root, verified.jobId);
     }

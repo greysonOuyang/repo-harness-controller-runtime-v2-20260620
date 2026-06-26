@@ -53,6 +53,7 @@ import {
   cancelLocalBridgeJob,
   dispatchLocalBridgeJob,
   executeLocalBridgeJob,
+  failLocalBridgeJob,
   getLocalBridgeJob,
   getLocalBridgeJobEvents,
   listLocalBridgeJobs,
@@ -169,8 +170,13 @@ function asyncExecute(repoRoot: string, jobId: string): void {
   setTimeout(() => {
     try {
       dispatchLocalBridgeJob(repoRoot, jobId);
-    } catch (_error) {
-      /* persisted by the job executor */
+    } catch (error) {
+      failLocalBridgeJob(
+        repoRoot,
+        jobId,
+        `JOB_DISPATCH_FAILED: ${errorMessage(error)}`,
+        { stage: "dispatch", retryable: false },
+      );
     }
   }, 0);
 }

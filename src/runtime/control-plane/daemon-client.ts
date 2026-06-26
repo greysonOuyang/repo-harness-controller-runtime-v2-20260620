@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { ensureControllerHome } from '../../cli/repositories/controller-home';
 import { withControllerLock } from '../../cli/repositories/locks';
 import { readJsonFile, writeJsonAtomic } from '../shared/json-files';
+import { readSchedulerHealthSnapshot } from './global-scheduler/scheduler';
 
 export interface ControllerDaemonStatus {
   schemaVersion: 1;
@@ -19,9 +20,19 @@ export interface ControllerDaemonStatus {
 
 function daemonPidPath(controllerHome: string): string { return join(ensureControllerHome(controllerHome), 'daemon', 'controller.pid'); }
 function daemonStatePath(controllerHome: string): string { return join(ensureControllerHome(controllerHome), 'daemon', 'state.json'); }
+const SCHEDULER_HEARTBEAT_STALE_MS = 5_000;
+const DAEMON_STARTUP_GRACE_MS = 15_000;
+
 function pidAlive(pid: number | undefined): boolean {
   if (!pid || pid <= 0) return false;
   try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+function schedulerHeartbeatHealthy(controllerHome: string): boolean {
+  const scheduler = readSchedulerHealthSnapshot(controllerHome);
+  if (!scheduler.loopStartedAt || !scheduler.lastTickAt) return false;
+  const lastTick = Date.parse(scheduler.lastTickAt);
+  return Number.isFinite(lastTick) && Date.now() - lastTick <= SCHEDULER_HEARTBEAT_STALE_MS;
 }
 
 export function readControllerDaemonStatus(controllerHome: string): ControllerDaemonStatus {
@@ -30,6 +41,18 @@ export function readControllerDaemonStatus(controllerHome: string): ControllerDa
   let pid = state.pid;
   try { pid = Number(readFileSync(daemonPidPath(home), 'utf8').trim()) || pid; } catch { /* no pid */ }
   if ((state.status === 'ready' || state.status === 'starting') && !pidAlive(pid)) return { ...state, status: 'stopped', pid };
+  if (state.status === 'ready' && !schedulerHeartbeatHealthy(home)) {
+    const startedAt = state.startedAt ? Date.parse(state.startedAt) : Number.NaN;
+    if (Number.isFinite(startedAt) && Date.now() - startedAt < DAEMON_STARTUP_GRACE_MS) {
+      return { ...state, status: 'starting', pid };
+    }
+    return {
+      ...state,
+      status: 'failed',
+      pid,
+      error: state.error ?? 'SCHEDULER_HEARTBEAT_MISSING',
+    };
+  }
   return { ...state, pid };
 }
 

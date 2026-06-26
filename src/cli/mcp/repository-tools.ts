@@ -24,6 +24,7 @@ function definition(
   description: string,
   properties: Record<string, unknown>,
   required: string[] = [],
+  readOnlyHint = false,
   destructiveHint = false,
 ): McpToolDefinition {
   return {
@@ -35,7 +36,7 @@ function definition(
       ...(required.length > 0 ? { required } : {}),
       additionalProperties: false,
     },
-    annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint },
+    annotations: { readOnlyHint, openWorldHint: false, destructiveHint },
   };
 }
 
@@ -50,11 +51,11 @@ export const repositoryToolDefinitions: McpToolDefinition[] = [
   }, ['path']),
   definition('repository_list', 'List registered repositories.', {
     include_removed: { type: 'boolean' },
-  }),
+  }, [], true),
   definition('repository_get', 'Inspect one registered repository.', {
     repo_id: repoId,
     include_removed: { type: 'boolean' },
-  }, ['repo_id']),
+  }, ['repo_id'], true),
   definition('repository_validate', 'Validate repository identity and migrate legacy ownership.', {
     repo_id: repoId,
   }, ['repo_id']),
@@ -76,13 +77,13 @@ export const repositoryToolDefinitions: McpToolDefinition[] = [
   definition('repository_workbench', 'Return global or repository-filtered Workbench state.', {
     repo_id: repoId,
     include_removed: { type: 'boolean' },
-  }),
+  }, [], true),
   definition('repository_command_preview', 'Preview one repository-scoped local command with classification, approval token, and Git snapshots.', {
     repo_id: repoId,
     checkout_id: { type: 'string', description: 'Optional checkout identity for repositories with multiple local clones.' },
     command: { type: 'string', description: 'Repository-local shell command to classify and preview.' },
     cwd: { type: 'string', description: 'Optional repository-relative working directory.' },
-  }, ['command']),
+  }, ['command'], true),
   definition('repository_command_execute', 'Execute one repository-scoped local command after replaying the exact approved preview token.', {
     repo_id: repoId,
     checkout_id: { type: 'string', description: 'Optional checkout identity for repositories with multiple local clones.' },

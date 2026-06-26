@@ -13,18 +13,22 @@ const controllerHome = ensureControllerHome(option('--controller-home'));
 const statePath = join(controllerHome, 'daemon', 'state.json');
 const pidPath = join(controllerHome, 'daemon', 'controller.pid');
 const abort = new AbortController();
+const startedAt = new Date().toISOString();
 for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => abort.abort());
 writeJsonAtomic(statePath, {
   schemaVersion: 1,
   status: 'ready',
   pid: process.pid,
-  startedAt: new Date().toISOString(),
+  startedAt,
   controllerHome,
   gatewaySeparated: true,
   workerIsolation: true,
 });
 writeFileSync(pidPath, `${process.pid}\n`, 'utf8');
-const scheduler = new GlobalScheduler(controllerHome);
+const scheduler = new GlobalScheduler(controllerHome, {}, {
+  controllerPid: process.pid,
+  controllerStartedAt: startedAt,
+});
 scheduler.run(abort.signal)
   .catch((error) => {
     writeJsonAtomic(statePath, { schemaVersion: 1, status: 'failed', pid: process.pid, error: error instanceof Error ? error.message : String(error), updatedAt: new Date().toISOString() });
