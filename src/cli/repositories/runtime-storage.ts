@@ -126,6 +126,25 @@ function moveDirectory(source: string, target: string): void {
   }
 }
 
+function legacyRuntimeBlocker(repositoryPath: string, spec: RuntimeStorageSpec): string | undefined {
+  const sourceEntries = directoryEntries(repositoryPath);
+  if (sourceEntries.length === 0) return undefined;
+
+  if (spec.preserveNonEmpty) {
+    return 'non-empty worktree storage cannot be moved safely; clean or integrate existing worktrees first';
+  }
+
+  if (spec.detectActiveRuns && hasActiveRuns(repositoryPath)) {
+    return 'active or unreadable legacy Runs must finish before runtime storage can be relocated';
+  }
+
+  if (spec.detectActiveLocalJobs && hasActiveLocalJobs(repositoryPath)) {
+    return 'active or unreadable Local Jobs must finish before runtime storage can be relocated';
+  }
+
+  return undefined;
+}
+
 function bindRuntimeDirectory(
   harnessRoot: string,
   controllerRoot: string,
@@ -145,13 +164,51 @@ function bindRuntimeDirectory(
     if (sameCanonicalPath(repositoryPath, controllerPath)) {
       return { name: spec.name, repositoryPath, controllerPath, status: 'already-linked' };
     }
-    return {
-      name: spec.name,
-      repositoryPath,
-      controllerPath,
-      status: 'conflict',
-      message: 'repository runtime path is already linked to a different target',
-    };
+
+    let legacyTarget: string;
+    try {
+      legacyTarget = realpathSync(repositoryPath);
+    } catch (_error) {
+      return {
+        name: spec.name,
+        repositoryPath,
+        controllerPath,
+        status: 'conflict',
+        message: 'repository runtime symlink target is missing',
+      };
+    }
+
+    const blocker = legacyRuntimeBlocker(repositoryPath, spec);
+    if (blocker) {
+      return {
+        name: spec.name,
+        repositoryPath,
+        controllerPath,
+        status: 'legacy-active',
+        message: blocker,
+      };
+    }
+
+    if (directoryEntries(controllerPath).length > 0) {
+      return {
+        name: spec.name,
+        repositoryPath,
+        controllerPath,
+        status: 'conflict',
+        message: 'both repository-local and Controller Home runtime directories contain data',
+      };
+    }
+
+    if (directoryEntries(repositoryPath).length > 0) {
+      moveDirectory(legacyTarget, controllerPath);
+      rmSync(repositoryPath, { recursive: true, force: true });
+      createDirectoryLink(controllerPath, repositoryPath);
+      return { name: spec.name, repositoryPath, controllerPath, status: 'migrated' };
+    }
+
+    rmSync(repositoryPath, { recursive: true, force: true });
+    createDirectoryLink(controllerPath, repositoryPath);
+    return { name: spec.name, repositoryPath, controllerPath, status: 'linked' };
   }
 
   if (!sourceStat.isDirectory()) {
@@ -171,33 +228,14 @@ function bindRuntimeDirectory(
     return { name: spec.name, repositoryPath, controllerPath, status: 'linked' };
   }
 
-  if (spec.preserveNonEmpty) {
+  const blocker = legacyRuntimeBlocker(repositoryPath, spec);
+  if (blocker) {
     return {
       name: spec.name,
       repositoryPath,
       controllerPath,
       status: 'legacy-active',
-      message: 'non-empty worktree storage cannot be moved safely; clean or integrate existing worktrees first',
-    };
-  }
-
-  if (spec.detectActiveRuns && hasActiveRuns(repositoryPath)) {
-    return {
-      name: spec.name,
-      repositoryPath,
-      controllerPath,
-      status: 'legacy-active',
-      message: 'active or unreadable legacy Runs must finish before runtime storage can be relocated',
-    };
-  }
-
-  if (spec.detectActiveLocalJobs && hasActiveLocalJobs(repositoryPath)) {
-    return {
-      name: spec.name,
-      repositoryPath,
-      controllerPath,
-      status: 'legacy-active',
-      message: 'active or unreadable Local Jobs must finish before runtime storage can be relocated',
+      message: blocker,
     };
   }
 

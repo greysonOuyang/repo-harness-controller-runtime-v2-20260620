@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { execSync } from 'child_process';
@@ -105,6 +105,29 @@ describe('v8.1 repository identity and selection', () => {
       expect(registered.github?.includeTasks).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('reuses the repo-local identity for remote repositories', () => {
+    const root = mkdtempSync(join(tmpdir(), 'repo-harness-v81-local-identity-'));
+    const controllerHome = mkdtempSync(join(tmpdir(), 'repo-harness-v81-local-identity-controller-'));
+    try {
+      mkdirSync(join(root, '.ai', 'harness'), { recursive: true });
+      writeFileSync(join(root, '.ai', 'harness', 'repository.json'), JSON.stringify({
+        schemaVersion: 1,
+        repoId: 'repo_preserved_from_local_identity',
+        checkoutId: 'checkout_previous',
+        stateStorageStrategy: 'hybrid',
+      }, null, 2));
+      execSync('git init -q', { cwd: root });
+      execSync('git remote add origin https://github.com/example/repo-a.git', { cwd: root });
+
+      const registered = registerRepository({ path: root, controllerHome });
+      expect(registered.repoId).toBe('repo_preserved_from_local_identity');
+      expect(listRepositories(controllerHome)[0]?.repoId).toBe('repo_preserved_from_local_identity');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(controllerHome, { recursive: true, force: true });
     }
   });
 

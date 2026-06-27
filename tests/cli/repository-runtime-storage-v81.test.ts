@@ -4,7 +4,9 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  rmSync,
   realpathSync,
+  symlinkSync,
   writeFileSync,
 } from 'fs';
 import { join } from 'path';
@@ -136,6 +138,37 @@ describe('v8.1 repository runtime storage isolation', () => {
       expect(runs?.status).toBe('migrated');
       expect(lstatSync(source).isSymbolicLink()).toBe(true);
       expect(existsSync(join(target, 'RUN-legacy', 'meta.json'))).toBe(true);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  test('migrates legacy runtime symlinks to the new Controller Home', () => {
+    const fixture = repositoryFixture();
+    try {
+      const oldControllerHome = join(fixture.root, 'old-controller-home');
+      const oldRunsTarget = join(repositoryControllerRoot(oldControllerHome, fixture.repoA.repoId), 'runs');
+      const source = join(fixture.repoA.canonicalRoot, '.ai', 'harness', 'jobs');
+      const legacyRun = join(oldRunsTarget, 'RUN-legacy');
+      rmSync(source, { recursive: true, force: true });
+      mkdirSync(oldRunsTarget, { recursive: true });
+      mkdirSync(legacyRun, { recursive: true });
+      writeFileSync(join(legacyRun, 'meta.json'), `${JSON.stringify({
+        schemaVersion: 3,
+        runId: 'RUN-legacy',
+        status: 'succeeded',
+        marker: 'from-old-controller-home',
+      }, null, 2)}\n`, 'utf-8');
+      symlinkSync(oldRunsTarget, source, 'dir');
+
+      const storage = ensureRepositoryRuntimeStorage(fixture.repoA, fixture.controllerHome);
+      const runs = storage.bindings.find((binding) => binding.name === 'runs');
+      const target = join(repositoryControllerRoot(fixture.controllerHome, fixture.repoA.repoId), 'runs');
+      expect(storage.readyForExecution).toBe(true);
+      expect(runs?.status).toBe('migrated');
+      expect(lstatSync(source).isSymbolicLink()).toBe(true);
+      expect(realpathSync(source)).toBe(realpathSync(target));
+      expect(readFileSync(join(target, 'RUN-legacy', 'meta.json'), 'utf-8')).toContain('from-old-controller-home');
     } finally {
       fixture.cleanup();
     }
