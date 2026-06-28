@@ -8,7 +8,7 @@ import {
   isSchedulerResourcePressured,
   parseDarwinAvailableMemoryMb,
 } from '../../src/runtime/control-plane/global-scheduler/scheduler';
-import { createExecutionJob, getExecutionJob } from '../../src/runtime/execution/jobs/store';
+import { attachExecutionWorker, createExecutionJob, getExecutionJob } from '../../src/runtime/execution/jobs/store';
 
 const roots: string[] = [];
 const originalPerRepoWorkers = process.env.REPO_HARNESS_PER_REPO_WORKERS;
@@ -106,6 +106,24 @@ Pages occupied by compressor:            999999.
     expect(jobs.find((job) => job.status === 'dispatched')?.workerPid).toBeUndefined();
   });
 
+  test('binds the worker pid without re-entering the scheduler dispatch lock', async () => {
+    const controllerHome = tempRoot();
+    const jobId = createCheck(controllerHome, 'repo-a', 'bind-after-dispatch-lock');
+    const scheduler = testScheduler(controllerHome, 1);
+    const internal = scheduler as unknown as {
+      spawnWorker: (repoId: string, jobId: string) => boolean;
+    };
+    internal.spawnWorker = (repoId, currentJobId) => Boolean(
+      attachExecutionWorker(controllerHome, repoId, currentJobId, 41_001),
+    );
+
+    await scheduler.tick();
+
+    const job = getExecutionJob(controllerHome, 'repo-a', jobId);
+    expect(job.status).toBe('running');
+    expect(job.workerPid).toBe(41_001);
+  });
+
   test('keeps a second same-repository job queued at the per-repo hard limit', async () => {
     process.env.REPO_HARNESS_PER_REPO_WORKERS = '1';
     const controllerHome = tempRoot();
@@ -124,16 +142,21 @@ Pages occupied by compressor:            999999.
     expect(jobs.filter((job) => job.status === 'queued')).toHaveLength(1);
   });
 
-  test('fails closed when another scheduler owns the global dispatch lock', async () => {
+  test('fails closed when another scheduler owns the dedicated dispatch lock', async () => {
     const controllerHome = tempRoot();
     const jobId = createCheck(controllerHome, 'repo-a', 'lock-contention');
     const scheduler = testScheduler(controllerHome, 4);
-    const lock = acquireControllerLock(controllerHome, { scope: 'global' }, 'scheduler-capacity-test', 10_000);
+    const dispatchLock = {
+      scope: 'task' as const,
+      repoId: '__controller__',
+      taskId: 'global-scheduler-dispatch',
+    };
+    const lock = acquireControllerLock(controllerHome, dispatchLock, 'scheduler-capacity-test', 10_000);
 
     try {
       await scheduler.tick();
     } finally {
-      releaseControllerLock(controllerHome, { scope: 'global' }, lock.lockId);
+      releaseControllerLock(controllerHome, dispatchLock, lock.lockId);
     }
 
     expect(getExecutionJob(controllerHome, 'repo-a', jobId).status).toBe('queued');

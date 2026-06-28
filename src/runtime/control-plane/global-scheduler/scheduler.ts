@@ -291,7 +291,11 @@ export class GlobalScheduler {
     try {
       activeJobs = withControllerLock(
         this.controllerHome,
-        { scope: 'global' },
+        {
+          scope: 'task',
+          repoId: '__controller__',
+          taskId: 'global-scheduler-dispatch',
+        },
         `global-scheduler:${this.controllerPid}`,
         () => {
           const active = listActiveExecutionJobs(this.controllerHome);
