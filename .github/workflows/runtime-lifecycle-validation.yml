@@ -12,19 +12,52 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+      - name: Apply audited patches
+        run: |
+          git apply --check scripts/patches/mcp-session-stability.patch
+          git apply scripts/patches/mcp-session-stability.patch
+          git apply --check scripts/patches/direct-edit-lines.patch
+          git apply scripts/patches/direct-edit-lines.patch
       - run: bun install --frozen-lockfile
       - name: Focused tests
         run: |
-          bun test tests/cli/mcp-keepalive.test.ts
-          bun test tests/runtime/mcp-http-session-recovery.test.ts
-          bun test tests/runtime/process-tree-reclamation.test.ts
-          bun test tests/cli/local-bridge.test.ts
-          bun test tests/cli/repository-mcp-command.test.ts
-          bun test tests/cli/controller-service.test.ts
-      - run: bun run check:type
-      - run: bun run check:mcp-compatibility
-      - run: bun run check:controller-v8
+          set -o pipefail
+          bun test tests/cli/mcp-keepalive.test.ts 2>&1 | tee runtime-validation.log
+          bun test tests/runtime/mcp-http-session-recovery.test.ts 2>&1 | tee -a runtime-validation.log
+          bun test tests/runtime/process-tree-reclamation.test.ts 2>&1 | tee -a runtime-validation.log
+          bun test tests/cli/local-bridge.test.ts 2>&1 | tee -a runtime-validation.log
+          bun test tests/cli/repository-mcp-command.test.ts 2>&1 | tee -a runtime-validation.log
+          bun test tests/cli/controller-service.test.ts 2>&1 | tee -a runtime-validation.log
+          bun test tests/cli/edit-session-changed-lines.test.ts 2>&1 | tee -a runtime-validation.log
+      - name: Type and compatibility checks
+        run: |
+          set -o pipefail
+          bun run check:type 2>&1 | tee -a runtime-validation.log
+          bun run check:mcp-compatibility 2>&1 | tee -a runtime-validation.log
+          bun run check:controller-v8 2>&1 | tee -a runtime-validation.log
+      - name: Check residual test processes
+        run: |
+          ps -axo pid=,ppid=,etime=,command= | tee -a runtime-validation.log
+          if ps -axo ppid=,command= | grep -E '^[[:space:]]*1[[:space:]].*(repo-harness-(local-bridge-controller|mcp-repo-restore)|job-worker\.ts|agent-job-launcher)' | grep -v grep; then
+            echo 'residual repo-harness process detected' | tee -a runtime-validation.log
+            exit 1
+          fi
+      - name: Package verified workspace
+        run: |
+          rm -rf node_modules .git
+          tar -czf repo-harness-controller-runtime-verified.tar.gz \
+            --exclude='dist' --exclude='build' --exclude='.DS_Store' \
+            --exclude='.ai/harness/jobs' --exclude='.ai/harness/worktrees' .
+          sha256sum repo-harness-controller-runtime-verified.tar.gz | tee runtime-source.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime-lifecycle-verified-source
+          path: |
+            repo-harness-controller-runtime-verified.tar.gz
+            runtime-validation.log
+            runtime-source.sha256
+          if-no-files-found: error
